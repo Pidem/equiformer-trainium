@@ -1,12 +1,5 @@
-"""Simple inference with EquiformerV3 on a dummy NaCl structure (Trainium/Neuron)."""
-
+"""Simple inference with EquiformerV3 on Neuron (Trainium)."""
 import sys
-import os
-
-PLATFORM = os.environ.get('NEURON_PLATFORM_TARGET_OVERRIDE', 'trn2')
-os.environ['NEURON_PLATFORM_TARGET_OVERRIDE'] = PLATFORM
-print(f'Platform: {PLATFORM}')
-
 sys.path.insert(0, "equiformer_v3/src")
 
 import torch
@@ -27,7 +20,7 @@ num_atoms = len(atoms)
 data.batch = torch.zeros(num_atoms, dtype=torch.long)
 data.natoms = torch.tensor([num_atoms])
 
-# 3. Instantiate a small EquiformerV3 (random weights)
+# 3. Instantiate model
 model = registry.get_model_class("equiformer_v3")(
     use_pbc=True,
     otf_graph=True,
@@ -52,7 +45,7 @@ model = registry.get_model_class("equiformer_v3")(
 model.eval()
 print(f"Model params: {model.num_params:,}")
 
-# 4. Move to neuron device
+# 4. Move model and data to neuron
 device = torch.device("neuron")
 model = model.to(device)
 data = data.to(device)
