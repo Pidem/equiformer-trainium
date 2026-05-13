@@ -1,6 +1,7 @@
 """Simple inference with EquiformerV3 on a dummy NaCl structure (Trainium/Neuron)."""
 
 import sys
+import os
 
 PLATFORM = os.environ.get('NEURON_PLATFORM_TARGET_OVERRIDE', 'trn2')
 os.environ['NEURON_PLATFORM_TARGET_OVERRIDE'] = PLATFORM
@@ -46,7 +47,7 @@ model = registry.get_model_class("equiformer_v3")(
     mmax=2,
     edge_channels=32,
     attn_grid_resolution_list=[8, 4],
-    ffn_grid_resolution_list=[8],
+    ffn_grid_resolution_list=[8, 4],
 )
 model.eval()
 print(f"Model params: {model.num_params:,}")
