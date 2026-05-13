@@ -1,5 +1,5 @@
-"""Simple inference with EquiformerV3 on a dummy NaCl structure."""
-import os
+"""Simple inference with EquiformerV3 on a dummy NaCl structure (Trainium/Neuron)."""
+
 import sys
 
 PLATFORM = os.environ.get('NEURON_PLATFORM_TARGET_OVERRIDE', 'trn2')
@@ -22,8 +22,9 @@ atoms = bulk("NaCl", crystalstructure="rocksalt", a=5.64)
 # 2. Convert to PyG graph
 a2g = AtomsToGraphs(max_neigh=20, radius=6.0, r_energy=False, r_forces=False, r_stress=False)
 data = a2g.convert_all([atoms])[0]
-data.batch = torch.zeros(data.natoms.sum(), dtype=torch.long)
-data.natoms = torch.tensor([len(atoms)])
+num_atoms = len(atoms)
+data.batch = torch.zeros(num_atoms, dtype=torch.long)
+data.natoms = torch.tensor([num_atoms])
 
 # 3. Instantiate a small EquiformerV3 (random weights)
 model = registry.get_model_class("equiformer_v3")(
@@ -50,7 +51,12 @@ model = registry.get_model_class("equiformer_v3")(
 model.eval()
 print(f"Model params: {model.num_params:,}")
 
-# 4. Run inference
+# 4. Move to neuron device
+device = torch.device("neuron")
+model = model.to(device)
+data = data.to(device)
+
+# 5. Run inference
 with torch.no_grad():
     outputs = model(data)
 
