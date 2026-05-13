@@ -5,3 +5,6 @@
 profile_output/
 tables
 system_profile/
+output/
+profiles/
+output_traced/
