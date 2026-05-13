@@ -1,5 +1,11 @@
 """Simple inference with EquiformerV3 on a dummy NaCl structure."""
+import os
 import sys
+
+PLATFORM = os.environ.get('NEURON_PLATFORM_TARGET_OVERRIDE', 'trn2')
+os.environ['NEURON_PLATFORM_TARGET_OVERRIDE'] = PLATFORM
+print(f'Platform: {PLATFORM}')
+
 sys.path.insert(0, "equiformer_v3/src")
 
 import torch
