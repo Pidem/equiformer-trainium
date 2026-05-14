@@ -1,4 +1,10 @@
-"""Run EquiformerV3 once on Neuron eager and report which ops fell back to CPU."""
+"""Run EquiformerV3 once on Neuron eager and report which ops fell back to CPU.
+
+Usage:
+    python list_fallback_ops.py            # baseline (unpatched) model
+    python list_fallback_ops.py --patched  # apply ablation patches first
+"""
+import argparse
 import os
 import sys
 import types
@@ -67,6 +73,12 @@ import fairchem.experimental.models.equiformer_v3.equiformer_v3  # noqa: F401
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--patched", action="store_true",
+                        help="Apply ablation patches (wigner_cache, expand_index_int32, "
+                             "wigner_nki_kernel, edge_rot_mat_nki) before running.")
+    args = parser.parse_args()
+
     atoms = bulk("NaCl", crystalstructure="rocksalt", a=5.64)
     a2g = AtomsToGraphs(
         max_neigh=20, radius=6.0, r_energy=False, r_forces=False, r_stress=False
@@ -102,6 +114,22 @@ def main():
     device = torch.device("neuron:0")
     model = model.to(device)
     data = data.to(device)
+
+    if args.patched:
+        from ablation import (
+            patch_wigner_cache,
+            patch_expand_index_int32,
+            patch_wigner_nki_kernel,
+            patch_edge_rot_mat_nki_kernel,
+            patch_torch_cross_explicit,
+        )
+        patch_wigner_cache()
+        patch_expand_index_int32(model)
+        patch_wigner_nki_kernel()
+        patch_edge_rot_mat_nki_kernel()
+        patch_torch_cross_explicit()
+        print("(running with ablation patches applied)")
+        print()
 
     torch_neuronx.clear_op_tracking()
 

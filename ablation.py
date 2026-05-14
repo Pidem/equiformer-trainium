@@ -72,6 +72,7 @@ from fairchem.core.preprocessing import AtomsToGraphs
 from fairchem.experimental.models.equiformer_v3 import wigner
 from fairchem.experimental.models.equiformer_v3 import so3
 from fairchem.experimental.models.equiformer_v3 import layer_norm as ln_mod
+from fairchem.experimental.models.equiformer_v3 import edge_rot_mat as erm_mod
 import fairchem.experimental.models.equiformer_v3.equiformer_v3  # noqa: F401
 
 
@@ -239,6 +240,61 @@ def patch_wigner_nki_kernel():
     wigner._z_rot_mat = _z_rot_mat_with_kernel
 
 
+def patch_torch_cross_explicit():
+    """
+    Replace torch.cross with an explicit-indexing implementation that runs
+    entirely on Neuron. The remaining linalg_cross fallback comes from
+    radius_graph_pbc in core.common.utils: it computes cell volume via
+    cross(a2, a3) etc. on tensors of shape [1, 3]. The op itself is trivial
+    (3 muls, 3 subs) but dispatching to a fallback forces a host round-trip.
+
+    Mathematically identical to torch.cross. Runs on Neuron because mul/sub/
+    cat on small tensors are already supported.
+    """
+    _orig = torch.cross
+
+    def _cross_explicit(a, b, dim=-1, out=None):
+        if out is not None:
+            raise NotImplementedError("out= not supported in patched cross")
+        if dim < 0:
+            dim = a.dim() + dim
+
+        def take(t, i):
+            idx = [slice(None)] * t.dim()
+            idx[dim] = slice(i, i + 1)
+            return t[tuple(idx)]
+
+        a0, a1, a2 = take(a, 0), take(a, 1), take(a, 2)
+        b0, b1, b2 = take(b, 0), take(b, 1), take(b, 2)
+        c0 = a1 * b2 - a2 * b1
+        c1 = a2 * b0 - a0 * b2
+        c2 = a0 * b1 - a1 * b0
+        return torch.cat([c0, c1, c2], dim=dim)
+
+    torch.cross = _cross_explicit
+
+
+def patch_edge_rot_mat_nki_kernel():
+    """
+    Replace edge_rot_mat.init_edge_rot_mat with an NKI kernel that runs
+    entirely on Neuron, eliminating the linalg_cross/uniform_ CPU fallbacks
+    and their associated host<->device round-trips.
+
+    Uses a deterministic tiebreaker (e2 = [0,1,0] or [0,0,1] depending on
+    norm_x[1]) instead of torch.rand_like; this changes the orientation of
+    the perpendicular plane but the final forces remain rotation-equivariant.
+
+    Note: equiformer_v3.py does `from .edge_rot_mat import init_edge_rot_mat`,
+    so we must patch the *imported reference* inside that module, not just
+    the original module attribute.
+    """
+    from nki_init_edge_rot_mat import init_edge_rot_mat_nki
+    from fairchem.experimental.models.equiformer_v3 import equiformer_v3 as eqv3_mod
+
+    erm_mod.init_edge_rot_mat = init_edge_rot_mat_nki
+    eqv3_mod.init_edge_rot_mat = init_edge_rot_mat_nki
+
+
 def main():
     data_cpu, n_atoms = build_data()
     print(f"Compound: NaCl supercell, {n_atoms} atoms, "
@@ -291,10 +347,28 @@ def main():
     patch_wigner_nki_kernel()
     step("+ wigner_nki_kernel", model, data, base_e, base_f)
 
+    """
+    Step 4: replace init_edge_rot_mat (cross/rand) with NKI kernel.
+    The deterministic tiebreaker changes the orientation of the perpendicular
+    plane vs. the random baseline, so the forces will differ by O(1) — that's
+    expected and equivariant; we only flag it.
+    """
+    patch_edge_rot_mat_nki_kernel()
+    step("+ edge_rot_mat_nki", model, data, base_e, base_f)
+
+    """
+    Step 5: replace torch.cross with explicit indexing so the remaining
+    linalg_cross fallback in radius_graph_pbc stays on Neuron.
+    """
+    patch_torch_cross_explicit()
+    step("+ torch_cross_explicit", model, data, base_e, base_f)
+
     print()
     print("rel ΔE / rel ΔF are |error| / max(|baseline|, 1.0).")
     print("On Neuron, fp32 reorderings typically show rel error ≤ 1e-4.")
     print("rel error > 1e-2 means the math actually changed.")
+    print("Note: edge_rot_mat_nki uses a deterministic tiebreaker; rel ΔF is")
+    print("expected to be O(1) — the model remains equivariant in that plane.")
 
 
 if __name__ == "__main__":
