@@ -255,6 +255,200 @@ are different</strong>: they're <em>geometry</em>, not deep learning. They run s
 across the 460-edge graph, the dispatcher overhead becomes dominant. <strong>This is exactly where the
 ablation patches focus.</strong></p>
 
+<h2>Why these specific ops fall back to CPU</h2>
+
+<p>"Falls back to CPU" doesn't mean the op is hard. It means the op isn't implemented in the
+Neuron backend yet — and the reasons differ from op to op. They split into three categories,
+each with a different fix path.</p>
+
+<svg viewBox="0 0 1040 380" width="100%">
+  <rect width="1040" height="380" fill="#0f1115"/>
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <!-- ============= CATEGORY A: trivial math, just not implemented ============= -->
+  <g font-family="ui-monospace, monospace" font-size="12">
+    <rect x="20" y="20" width="320" height="340" fill="#161a22" stroke="#2a3142" rx="10"/>
+    <text x="40" y="46" fill="#e6e8ee" font-weight="700" font-size="14">A. Trivial math, just unimplemented</text>
+    <text x="40" y="64" fill="#8b94a7" font-size="11">torch.cross  ·  atan2  ·  acos</text>
+
+    <!-- cross product visual -->
+    <g transform="translate(60, 95)" color="#ff6e6e">
+      <line x1="0" y1="80" x2="0" y2="0" stroke="#2a3142"/>
+      <line x1="0" y1="80" x2="100" y2="80" stroke="#2a3142"/>
+      <line x1="0" y1="80" x2="-30" y2="100" stroke="#2a3142"/>
+      <text x="-50" y="-2" fill="#8b94a7" font-size="10">z</text>
+      <text x="105" y="84" fill="#8b94a7" font-size="10">x</text>
+      <text x="-40" y="106" fill="#8b94a7" font-size="10">y</text>
+
+      <line x1="0" y1="80" x2="70" y2="20" stroke="#7cc4ff" stroke-width="2.5" marker-end="url(#ar3)" color="#7cc4ff"/>
+      <text x="40" y="20" fill="#7cc4ff" font-size="11">a</text>
+
+      <line x1="0" y1="80" x2="80" y2="60" stroke="#7ee787" stroke-width="2.5" marker-end="url(#ar3)" color="#7ee787"/>
+      <text x="80" y="55" fill="#7ee787" font-size="11">b</text>
+
+      <line x1="0" y1="80" x2="-25" y2="20" stroke="#ffb454" stroke-width="3" marker-end="url(#ar3)" color="#ffb454"/>
+      <text x="-50" y="22" fill="#ffb454" font-size="11" font-weight="700">a × b</text>
+    </g>
+
+    <text x="40" y="240" fill="#e6e8ee" font-size="11" font-weight="700">The math:</text>
+    <text x="40" y="258" fill="#e6e8ee" font-size="11">c[0] = a[1]·b[2] − a[2]·b[1]</text>
+    <text x="40" y="274" fill="#e6e8ee" font-size="11">c[1] = a[2]·b[0] − a[0]·b[2]</text>
+    <text x="40" y="290" fill="#e6e8ee" font-size="11">c[2] = a[0]·b[1] − a[1]·b[0]</text>
+    <text x="40" y="312" fill="#8b94a7" font-size="11">3 multiplies + 3 subtracts. All on-Neuron.</text>
+
+    <rect x="40" y="324" width="280" height="22" fill="#133420" stroke="#285c30" rx="4"/>
+    <text x="50" y="340" fill="#7ee787" font-size="11">Fix: rewrite as explicit indexing  →  patch 5</text>
+  </g>
+
+  <!-- ============= CATEGORY B: no on-device hardware support ============= -->
+  <g font-family="ui-monospace, monospace" font-size="12">
+    <rect x="360" y="20" width="320" height="340" fill="#161a22" stroke="#2a3142" rx="10"/>
+    <text x="380" y="46" fill="#e6e8ee" font-weight="700" font-size="14">B. No on-device hardware path</text>
+    <text x="380" y="64" fill="#8b94a7" font-size="11">torch.rand_like  ·  torch.uniform_</text>
+
+    <!-- "scattered random" visual: a 3x6 grid that fills with random values -->
+    <g transform="translate(380, 90)">
+      <text x="0" y="-2" fill="#8b94a7" font-size="11">empty tensor</text>
+      <g>
+        <rect x="0"  y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+        <rect x="42" y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+        <rect x="84" y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+        <rect x="126" y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+        <rect x="168" y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+        <rect x="210" y="8" width="40" height="22" fill="#0a0d12" stroke="#2a3142"/>
+      </g>
+
+      <line x1="125" y1="42" x2="125" y2="62" stroke="#ff6e6e" stroke-width="2" marker-end="url(#ar3)" color="#ff6e6e"/>
+      <text x="80" y="78" fill="#ff6e6e" font-size="11">round-trip to host CPU</text>
+
+      <text x="0" y="100" fill="#8b94a7" font-size="11">filled with PRNG values</text>
+      <g>
+        <rect x="0"   y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="6" y="125" fill="#c0a8ff" font-size="11">0.41</text>
+        <rect x="42"  y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="48" y="125" fill="#c0a8ff" font-size="11">0.83</text>
+        <rect x="84"  y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="90" y="125" fill="#c0a8ff" font-size="11">0.17</text>
+        <rect x="126" y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="132" y="125" fill="#c0a8ff" font-size="11">0.62</text>
+        <rect x="168" y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="174" y="125" fill="#c0a8ff" font-size="11">0.05</text>
+        <rect x="210" y="110" width="40" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="216" y="125" fill="#c0a8ff" font-size="11">0.93</text>
+      </g>
+    </g>
+
+    <text x="380" y="252" fill="#e6e8ee" font-size="11" font-weight="700">Why it falls back:</text>
+    <text x="380" y="270" fill="#8b94a7" font-size="11">Neuron has no on-device PRNG state.</text>
+    <text x="380" y="286" fill="#8b94a7" font-size="11">Every <tspan fill="#e6e8ee">rand_like</tspan> sends an empty tensor</text>
+    <text x="380" y="302" fill="#8b94a7" font-size="11">to host, fills it on CPU, copies it back.</text>
+
+    <rect x="380" y="324" width="280" height="22" fill="#133420" stroke="#285c30" rx="4"/>
+    <text x="390" y="340" fill="#7ee787" font-size="11">Fix: deterministic constant tiebreaker → patch 4</text>
+  </g>
+
+  <!-- ============= CATEGORY C: data-dependent output shape ============= -->
+  <g font-family="ui-monospace, monospace" font-size="12">
+    <rect x="700" y="20" width="320" height="340" fill="#161a22" stroke="#2a3142" rx="10"/>
+    <text x="720" y="46" fill="#e6e8ee" font-weight="700" font-size="14">C. Data-dependent output shape</text>
+    <text x="720" y="64" fill="#8b94a7" font-size="11">masked_select · repeat_interleave · sort</text>
+
+    <!-- masked_select visual -->
+    <g transform="translate(720, 90)">
+      <text x="0" y="-2" fill="#8b94a7" font-size="11">input</text>
+      <rect x="0"   y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="6" y="23" fill="#e6e8ee" font-size="11">3.1</text>
+      <rect x="36"  y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="42" y="23" fill="#e6e8ee" font-size="11">2.7</text>
+      <rect x="72"  y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="78" y="23" fill="#e6e8ee" font-size="11">5.0</text>
+      <rect x="108" y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="114" y="23" fill="#e6e8ee" font-size="11">1.4</text>
+      <rect x="144" y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="150" y="23" fill="#e6e8ee" font-size="11">9.8</text>
+      <rect x="180" y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="186" y="23" fill="#e6e8ee" font-size="11">2.6</text>
+      <rect x="216" y="8" width="34" height="22" fill="#0a0d12" stroke="#2a3142"/><text x="222" y="23" fill="#e6e8ee" font-size="11">5.3</text>
+
+      <text x="0" y="58" fill="#8b94a7" font-size="11">mask</text>
+      <rect x="0"   y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="10" y="83" fill="#7ee787" font-size="11">T</text>
+      <rect x="36"  y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="46" y="83" fill="#ff6e6e" font-size="11">F</text>
+      <rect x="72"  y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="82" y="83" fill="#7ee787" font-size="11">T</text>
+      <rect x="108" y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="118" y="83" fill="#ff6e6e" font-size="11">F</text>
+      <rect x="144" y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="154" y="83" fill="#7ee787" font-size="11">T</text>
+      <rect x="180" y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="190" y="83" fill="#ff6e6e" font-size="11">F</text>
+      <rect x="216" y="68" width="34" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="226" y="83" fill="#7ee787" font-size="11">T</text>
+
+      <text x="0" y="118" fill="#8b94a7" font-size="11">output  (length depends on mask values)</text>
+      <rect x="0"   y="128" width="34" height="22" fill="#0a0d12" stroke="#7ee787"/><text x="6" y="143" fill="#e6e8ee" font-size="11">3.1</text>
+      <rect x="36"  y="128" width="34" height="22" fill="#0a0d12" stroke="#7ee787"/><text x="42" y="143" fill="#e6e8ee" font-size="11">5.0</text>
+      <rect x="72"  y="128" width="34" height="22" fill="#0a0d12" stroke="#7ee787"/><text x="78" y="143" fill="#e6e8ee" font-size="11">9.8</text>
+      <rect x="108" y="128" width="34" height="22" fill="#0a0d12" stroke="#7ee787"/><text x="114" y="143" fill="#e6e8ee" font-size="11">5.3</text>
+      <text x="148" y="143" fill="#8b94a7" font-size="11">  ← length=4</text>
+    </g>
+
+    <text x="720" y="270" fill="#e6e8ee" font-size="11" font-weight="700">Why it falls back:</text>
+    <text x="720" y="286" fill="#8b94a7" font-size="11">Compiler must allocate output buffer at</text>
+    <text x="720" y="302" fill="#8b94a7" font-size="11">compile time. Output size = sum(mask) —</text>
+    <text x="720" y="318" fill="#8b94a7" font-size="11">unknown until runtime. Same issue blocks</text>
+    <text x="720" y="334" fill="#8b94a7" font-size="11">repeat_interleave(x, count) and sort.</text>
+
+    <rect x="720" y="346" width="280" height="14" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+    <text x="730" y="357" fill="#ff6e6e" font-size="10">Fix: structural — needs dynamic-shape support</text>
+  </g>
+</svg>
+<p class="caption">Three categories of CPU fallback. Each one calls for a different fix.</p>
+
+<h3>What about <code>sort.values_stable</code>?</h3>
+
+<p>Sort actually has <em>two</em> reasons it's hard:</p>
+
+<svg viewBox="0 0 1040 200" width="100%">
+  <rect width="1040" height="200" fill="#0f1115"/>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <text x="20" y="40" fill="#8b94a7">unsorted</text>
+    <g transform="translate(20, 50)">
+      <rect x="0"   y="0" width="34" height="50" fill="#7cc4ff" opacity="0.7"/><text x="10" y="68" font-size="10">3</text>
+      <rect x="36"  y="20" width="34" height="30" fill="#7cc4ff" opacity="0.7"/><text x="46" y="68" font-size="10">1a</text>
+      <rect x="72"  y="-10" width="34" height="60" fill="#7cc4ff" opacity="0.7"/><text x="84" y="68" font-size="10">4</text>
+      <rect x="108" y="20" width="34" height="30" fill="#7cc4ff" opacity="0.7"/><text x="118" y="68" font-size="10">1b</text>
+      <rect x="144" y="-30" width="34" height="80" fill="#7cc4ff" opacity="0.7"/><text x="156" y="68" font-size="10">5</text>
+      <rect x="180" y="-50" width="34" height="100" fill="#7cc4ff" opacity="0.7"/><text x="192" y="68" font-size="10">9</text>
+      <rect x="216" y="10" width="34" height="40" fill="#7cc4ff" opacity="0.7"/><text x="228" y="68" font-size="10">2</text>
+      <rect x="252" y="-20" width="34" height="70" fill="#7cc4ff" opacity="0.7"/><text x="262" y="68" font-size="10">6</text>
+    </g>
+
+    <line x1="320" y1="80" x2="380" y2="80" stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar2)"/>
+    <text x="330" y="74" fill="#8b94a7" font-size="10">sort</text>
+
+    <text x="400" y="40" fill="#8b94a7">sorted (stable: 1a stays before 1b)</text>
+    <g transform="translate(400, 50)">
+      <rect x="0"   y="20" width="34" height="30" fill="#7ee787" opacity="0.7"/><text x="10" y="68" font-size="10">1a</text>
+      <rect x="36"  y="20" width="34" height="30" fill="#7ee787" opacity="0.7"/><text x="46" y="68" font-size="10">1b</text>
+      <rect x="72"  y="10" width="34" height="40" fill="#7ee787" opacity="0.7"/><text x="84" y="68" font-size="10">2</text>
+      <rect x="108" y="0" width="34" height="50" fill="#7ee787" opacity="0.7"/><text x="118" y="68" font-size="10">3</text>
+      <rect x="144" y="-10" width="34" height="60" fill="#7ee787" opacity="0.7"/><text x="156" y="68" font-size="10">4</text>
+      <rect x="180" y="-30" width="34" height="80" fill="#7ee787" opacity="0.7"/><text x="192" y="68" font-size="10">5</text>
+      <rect x="216" y="-20" width="34" height="70" fill="#7ee787" opacity="0.7"/><text x="226" y="68" font-size="10">6</text>
+      <rect x="252" y="-50" width="34" height="100" fill="#7ee787" opacity="0.7"/><text x="262" y="68" font-size="10">9</text>
+    </g>
+
+    <rect x="720" y="50" width="300" height="120" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="734" y="72" fill="#e6e8ee" font-weight="700" font-size="12">Two problems:</text>
+    <text x="734" y="92" fill="#8b94a7" font-size="11">1. Data-dependent control flow:</text>
+    <text x="734" y="108" fill="#8b94a7" font-size="11">   each compare-and-swap depends on values.</text>
+    <text x="734" y="128" fill="#8b94a7" font-size="11">2. Permutation index buffer:</text>
+    <text x="734" y="144" fill="#8b94a7" font-size="11">   the <tspan fill="#e6e8ee">.indices</tspan> output is gather-style,</text>
+    <text x="734" y="160" fill="#8b94a7" font-size="11">   awkward on Neuron's matmul-first hardware.</text>
+  </g>
+</svg>
+
+<p>Sort lives in category C (the output shape is fine, but it's gather-heavy and serial)
+plus a SIMD-mismatch problem on top. It's the hardest of the bunch and the one we didn't
+attack — for our PBC graph build, the cost is acceptable because it runs on
+<code>[1, 3]</code> tensors.</p>
+
+<div class="panel">
+<strong>Reading the categories.</strong> Patches 4, 5, and our wigner kernel all attack <strong>category A</strong> —
+the easy ones. Patch 4 also handles <strong>category B</strong> (replaces <code>rand_like</code> with a constant).
+Category C — <code>masked_select</code>, <code>repeat_interleave</code>, <code>sort</code> — are the structurally hard ones
+that require either dynamic-shape compiler support or a model rewrite to remove.
+That's why our final 6 remaining fallbacks are dominated by category C.
+</div>
+
 <h2>Results</h2>
 
 <div class="panel">
