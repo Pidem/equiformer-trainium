@@ -109,6 +109,140 @@ in-place on the previous model. Numerical equivalence is verified after every pa
   "forces":  [N=24, 3]    <span style="color:var(--muted)"># force on each atom (eV/Å)</span>
 }</pre>
 
+<h2>Background: spherical harmonics, in one minute</h2>
+
+<p>EquiformerV3 represents per-edge directions and per-node features as <strong>spherical-harmonic
+coefficients</strong>. Why? Because rotation acts cleanly on this representation: each "level" <em>l</em>
+transforms independently via a (2<em>l</em>+1)×(2<em>l</em>+1) matrix (the Wigner-D matrix). That's
+what lets the model be exactly rotation-equivariant, and it's why several of the kernels we wrote
+target the Wigner-D path.</p>
+
+<p>The full walkthrough lives in <a href="spherical_harmonics_explained.html" style="color:var(--accent)">spherical_harmonics_explained.html</a>.
+The condensed version below covers what's needed to read the rest of this document.</p>
+
+<svg viewBox="0 0 1040 280" width="100%">
+  <rect width="1040" height="280" fill="#0f1115"/>
+  <defs>
+    <marker id="sha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <!-- LEFT: direction on sphere -->
+    <text x="20" y="30" fill="#8b94a7">A direction (unit vector on the sphere)</text>
+    <g transform="translate(120, 140)">
+      <circle cx="0" cy="0" r="80" fill="none" stroke="#2a3142" stroke-width="1.5"/>
+      <ellipse cx="0" cy="0" rx="80" ry="22" fill="none" stroke="#2a3142" stroke-width="0.8" stroke-dasharray="4 3"/>
+      <line x1="0" y1="0" x2="0" y2="-90" stroke="#8b94a7" stroke-width="1"/>
+      <text x="6" y="-92" fill="#8b94a7" font-size="10">z</text>
+      <line x1="0" y1="0" x2="90" y2="0" stroke="#8b94a7" stroke-width="1"/>
+      <text x="94" y="4" fill="#8b94a7" font-size="10">x</text>
+      <line x1="0" y1="0" x2="-40" y2="28" stroke="#8b94a7" stroke-width="1"/>
+      <text x="-50" y="38" fill="#8b94a7" font-size="10">y</text>
+      <line x1="0" y1="0" x2="50" y2="-60" stroke="#7cc4ff" stroke-width="2.5" marker-end="url(#sha)"/>
+      <circle cx="50" cy="-60" r="4" fill="#7cc4ff"/>
+      <text x="58" y="-62" fill="#7cc4ff">r̂</text>
+    </g>
+
+    <!-- arrow to coefficients -->
+    <line x1="220" y1="140" x2="290" y2="140" stroke="#7cc4ff" stroke-width="2" marker-end="url(#sha)"/>
+    <text x="240" y="130" fill="#7cc4ff" font-size="11">Y(r̂)</text>
+
+    <!-- RIGHT: coefficient stack -->
+    <text x="320" y="30" fill="#8b94a7">A vector of (lmax+1)² coefficients, structured by level</text>
+
+    <g transform="translate(320, 60)">
+      <rect x="0" y="0" width="42" height="22" fill="#133420" stroke="#285c30"/><text x="6" y="15" fill="#7ee787">l=0</text>
+      <text x="50" y="15" fill="#8b94a7" font-size="11">1 number — "something is there"</text>
+    </g>
+
+    <g transform="translate(320, 92)">
+      <rect x="0"  y="0" width="42" height="22" fill="#0f2030" stroke="#1a3a5c"/><text x="6" y="15" fill="#7cc4ff">l=1</text>
+      <rect x="44" y="0" width="42" height="22" fill="#0f2030" stroke="#1a3a5c"/><text x="50" y="15" fill="#7cc4ff">l=1</text>
+      <rect x="88" y="0" width="42" height="22" fill="#0f2030" stroke="#1a3a5c"/><text x="94" y="15" fill="#7cc4ff">l=1</text>
+      <text x="138" y="15" fill="#8b94a7" font-size="11">3 numbers — the xyz direction itself</text>
+    </g>
+
+    <g transform="translate(320, 124)">
+      <rect x="0"   y="0" width="42" height="22" fill="#2a1f10" stroke="#5a4422"/><text x="6"   y="15" fill="#ffb454">l=2</text>
+      <rect x="44"  y="0" width="42" height="22" fill="#2a1f10" stroke="#5a4422"/><text x="50"  y="15" fill="#ffb454">l=2</text>
+      <rect x="88"  y="0" width="42" height="22" fill="#2a1f10" stroke="#5a4422"/><text x="94"  y="15" fill="#ffb454">l=2</text>
+      <rect x="132" y="0" width="42" height="22" fill="#2a1f10" stroke="#5a4422"/><text x="138" y="15" fill="#ffb454">l=2</text>
+      <rect x="176" y="0" width="42" height="22" fill="#2a1f10" stroke="#5a4422"/><text x="182" y="15" fill="#ffb454">l=2</text>
+      <text x="230" y="15" fill="#8b94a7" font-size="11">5 numbers — quadratic angular pattern (xy, yz, xz, ...)</text>
+    </g>
+
+    <g transform="translate(320, 156)">
+      <rect x="0"   y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="44"  y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="88"  y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="132" y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="176" y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="220" y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <rect x="264" y="0" width="42" height="22" fill="#1f1430" stroke="#3d2a5c"/>
+      <text x="6" y="15" fill="#c0a8ff">l=3</text>
+      <text x="316" y="15" fill="#8b94a7" font-size="11">7 numbers — cubic angular pattern (and so on)</text>
+    </g>
+
+    <text x="320" y="208" fill="#e6e8ee" font-size="12" font-weight="700">Total: <tspan fill="#7cc4ff">(lmax+1)²</tspan></text>
+    <text x="320" y="226" fill="#8b94a7" font-size="11">For our run: lmax = 2 → 9 numbers per direction per channel.</text>
+    <text x="320" y="242" fill="#8b94a7" font-size="11">Tensor shape that flows through the network: <tspan fill="#e6e8ee">[N=24, 9, C=32]</tspan>.</text>
+  </g>
+</svg>
+<p class="caption">A direction is a single point on the sphere; spherical harmonics turn it into
+(lmax+1)² coefficients structured by level <em>l</em>. Each level transforms independently under rotation.</p>
+
+<h3>Why levels matter — the cancellation argument</h3>
+
+<p>If you only kept l=1 (the xyz vector), you'd lose information whenever an atom has neighbors in
+opposite directions: <code>[-1,0,0] + [+1,0,0] = [0,0,0]</code>. Higher levels survive that cancellation
+because they're <em>polynomials</em> — x² is positive whether x is +1 or −1.</p>
+
+<svg viewBox="0 0 1040 200" width="100%">
+  <rect width="1040" height="200" fill="#0f1115"/>
+  <g font-family="ui-monospace, monospace" font-size="11" fill="#e6e8ee">
+    <circle cx="180" cy="100" r="14" fill="#7cc4ff"/><text x="172" y="105" fill="#0f1115" font-weight="700">i</text>
+    <circle cx="80"  cy="100" r="12" fill="#ffb454"/><text x="74" y="105" fill="#0f1115" font-weight="700">j</text>
+    <circle cx="280" cy="100" r="12" fill="#ffb454"/><text x="274" y="105" fill="#0f1115" font-weight="700">k</text>
+    <line x1="166" y1="100" x2="92"  y2="100" stroke="#7ee787" stroke-width="2"/>
+    <line x1="194" y1="100" x2="268" y2="100" stroke="#7ee787" stroke-width="2"/>
+
+    <text x="55" y="80" fill="#8b94a7">r̂_ij = [−1, 0, 0]</text>
+    <text x="240" y="80" fill="#8b94a7">r̂_ik = [+1, 0, 0]</text>
+
+    <line x1="320" y1="100" x2="380" y2="100" stroke="#7cc4ff" stroke-width="1.5" stroke-dasharray="3 2"/>
+
+    <rect x="400" y="40" width="290" height="55" fill="#161a22" stroke="#1a3a5c" rx="6"/>
+    <text x="412" y="60" fill="#7cc4ff" font-weight="700">l=1 (vector) sum</text>
+    <text x="412" y="78" fill="#e6e8ee">[−1,0,0] + [+1,0,0] = [0,0,0]</text>
+    <text x="412" y="92" fill="#ff6e6e">→ direction completely lost</text>
+
+    <rect x="400" y="105" width="290" height="65" fill="#161a22" stroke="#5a4422" rx="6"/>
+    <text x="412" y="125" fill="#ffb454" font-weight="700">l=2 (quadrupole) sum</text>
+    <text x="412" y="143" fill="#e6e8ee">x² survives: (−1)² + (+1)² = 2</text>
+    <text x="412" y="159" fill="#7ee787">→ encodes "neighbors lie along the x-axis"</text>
+
+    <rect x="710" y="40" width="310" height="130" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="725" y="60" fill="#e6e8ee" font-weight="700">Why this matters for the kernels</text>
+    <text x="725" y="84" fill="#8b94a7">Equiformer keeps levels up to <tspan fill="#e6e8ee">lmax = 2</tspan>.</text>
+    <text x="725" y="102" fill="#8b94a7">→ Each edge needs a 9-dim SH vector</text>
+    <text x="725" y="118" fill="#8b94a7">  AND a 9×9 Wigner-D rotation matrix per edge.</text>
+    <text x="725" y="142" fill="#8b94a7">The Wigner-D matrices factor as:</text>
+    <text x="725" y="160" fill="#c0a8ff">     X<tspan dy="-3">α</tspan><tspan dy="3"> · J · X</tspan><tspan dy="-3">β</tspan><tspan dy="3"> · J · X</tspan><tspan dy="-3">γ</tspan>   (← the chain we fused in NKI)</text>
+  </g>
+</svg>
+<p class="caption">Higher-l components encode angular patterns that survive aggregation. This is
+exactly why the Wigner-D chain is in the hot path — every edge produces one.</p>
+
+<div class="panel">
+<strong>Connecting back to the patches.</strong> Two of our five patches target the Wigner-D code path:
+<code>wigner_cache</code> (caches the per-<em>l</em> index tensors used to build each <em>X<sub>θ</sub></em>) and
+<code>wigner_nki_kernel</code> (fuses the entire <em>X<sub>α</sub>·J·X<sub>β</sub>·J·X<sub>γ</sub></em> chain into one NKI call).
+The third — <code>edge_rot_mat_nki</code> — produces the per-edge frame from which the Euler angles
+α, β, γ are extracted, so it feeds directly into the Wigner-D computation.
+</div>
+
 <h2>The forward pass — what each layer does and which ops it uses</h2>
 
 <p>The model has five logical stages. The diagram below shows how the input tensors flow
