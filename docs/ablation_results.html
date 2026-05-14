@@ -449,6 +449,210 @@ that require either dynamic-shape compiler support or a model rewrite to remove.
 That's why our final 6 remaining fallbacks are dominated by category C.
 </div>
 
+<h2>The hidden cost of <code>.item()</code> — one Python line, three problems</h2>
+
+<p>EquiformerV3's PBC graph construction has three innocent-looking <code>.item()</code> calls inside
+<code>radius_graph_pbc</code> (in <code>core/common/utils.py</code>):</p>
+
+<pre>if not torch.any(data.pbc[:, i]).<span style="color:var(--bad)">item()</span>:                        <span style="color:var(--muted)"># line 633</span>
+    rep_a1 = data.cell.new_zeros(1)
+elif torch.all(data.pbc[:, i]).<span style="color:var(--bad)">item()</span>:                      <span style="color:var(--muted)"># line 635</span>
+    rep_a1 = torch.ceil(radius * inv_min_dist_a1)
+
+unit_cell = torch.cartesian_prod(*[
+    torch.arange(-rep.<span style="color:var(--bad)">item()</span>, rep.<span style="color:var(--bad)">item()</span>+1, ...)        <span style="color:var(--muted)"># line 720</span>
+    for rep in max_rep
+])</pre>
+
+<p><code>.item()</code> looks like a value extraction. In reality it's <strong>three things at once</strong>:
+a host-sync barrier, a graph break, and (when the value drives a shape) a recompilation trigger.</p>
+
+<h3>Problem 1: forced device-host synchronization</h3>
+
+<svg viewBox="0 0 1040 270" width="100%">
+  <rect width="1040" height="270" fill="#0f1115"/>
+  <defs>
+    <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <text x="20" y="30" fill="#7ee787" font-weight="700" font-size="13">Without .item() — async pipeline</text>
+    <text x="20" y="55" fill="#8b94a7">Device:</text>
+    <rect x="80" y="42" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="100" y="56" fill="#0f1115" font-size="10">op1</text>
+    <rect x="162" y="42" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="182" y="56" fill="#0f1115" font-size="10">op2</text>
+    <rect x="244" y="42" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="264" y="56" fill="#0f1115" font-size="10">op3</text>
+    <rect x="326" y="42" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="346" y="56" fill="#0f1115" font-size="10">op4</text>
+    <rect x="408" y="42" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="428" y="56" fill="#0f1115" font-size="10">op5</text>
+
+    <text x="20" y="90" fill="#8b94a7">Host:</text>
+    <rect x="80" y="77" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="92" y="91" fill="#e6e8ee" font-size="10">py</text>
+    <rect x="132" y="77" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="144" y="91" fill="#e6e8ee" font-size="10">py</text>
+    <rect x="184" y="77" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="196" y="91" fill="#e6e8ee" font-size="10">py</text>
+    <rect x="236" y="77" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="248" y="91" fill="#e6e8ee" font-size="10">py</text>
+
+    <text x="540" y="68" fill="#7ee787">→ host queues ops, device runs ahead.</text>
+    <text x="540" y="84" fill="#7ee787">  Engines stay saturated.</text>
+
+    <line x1="20" y1="120" x2="1020" y2="120" stroke="#2a3142" stroke-dasharray="2 4"/>
+
+    <text x="20" y="150" fill="#ff6e6e" font-weight="700" font-size="13">With .item() — forced sync</text>
+    <text x="20" y="175" fill="#8b94a7">Device:</text>
+    <rect x="80" y="162" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="100" y="176" fill="#0f1115" font-size="10">op1</text>
+    <rect x="162" y="162" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="182" y="176" fill="#0f1115" font-size="10">op2</text>
+    <rect x="244" y="162" width="200" height="20" fill="#2a1414" stroke="#5a2a2a" stroke-dasharray="4 2" rx="2"/>
+    <text x="295" y="176" fill="#ff6e6e" font-size="10" font-weight="700">────── idle ──────</text>
+    <rect x="446" y="162" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="466" y="176" fill="#0f1115" font-size="10">op3</text>
+    <rect x="528" y="162" width="80" height="20" fill="#7cc4ff" opacity="0.7" rx="2"/><text x="548" y="176" fill="#0f1115" font-size="10">op4</text>
+
+    <text x="20" y="210" fill="#8b94a7">Host:</text>
+    <rect x="80" y="197" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="92" y="211" fill="#e6e8ee" font-size="10">py</text>
+    <rect x="132" y="197" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="144" y="211" fill="#e6e8ee" font-size="10">py</text>
+    <rect x="184" y="197" width="140" height="20" fill="#0a0d12" stroke="#5a2a2a" stroke-dasharray="3 2" rx="2"/>
+    <text x="200" y="211" fill="#ff6e6e" font-size="10" font-weight="700">block on .item()</text>
+    <rect x="326" y="197" width="120" height="20" fill="#ffb454" opacity="0.5" rx="2"/><text x="340" y="211" fill="#0f1115" font-size="10" font-weight="700">if / arange shape</text>
+    <rect x="448" y="197" width="50" height="20" fill="#c0a8ff" opacity="0.4" rx="2"/><text x="458" y="211" fill="#e6e8ee" font-size="10">py</text>
+
+    <line x1="244" y1="162" x2="244" y2="217" stroke="#ffb454" stroke-width="2" stroke-dasharray="3 2"/>
+    <text x="248" y="158" fill="#ffb454" font-size="10">device drains</text>
+    <line x1="324" y1="207" x2="446" y2="172" stroke="#ffb454" stroke-width="1.5" marker-end="url(#ar5)"/>
+    <text x="360" y="195" fill="#ffb454" font-size="10">launch</text>
+
+    <text x="640" y="195" fill="#ff6e6e">device idle = wasted µs per call</text>
+    <text x="640" y="211" fill="#ff6e6e">× many calls = real wall-clock cost</text>
+  </g>
+</svg>
+<p class="caption"><code>.item()</code> requires the value, which means the device must finish computing it
+before Python can continue. The async pipeline collapses into a serial round-trip.</p>
+
+<h3>Problem 2: graph break — one fused graph becomes two</h3>
+
+<svg viewBox="0 0 1040 220" width="100%">
+  <rect width="1040" height="220" fill="#0f1115"/>
+  <defs>
+    <marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <text x="20" y="30" fill="#7ee787" font-weight="700" font-size="13">Without .item()</text>
+    <rect x="20" y="50" width="500" height="80" fill="#133420" stroke="#285c30" stroke-width="2" stroke-dasharray="6 3" rx="8"/>
+    <text x="34" y="72" fill="#7ee787" font-size="11" font-weight="700">single NEFF — fully fused</text>
+    <g transform="translate(40, 90)">
+      <circle cx="20" cy="15" r="14" fill="#7cc4ff"/><text x="14" y="19" fill="#0f1115" font-size="10">A</text>
+      <line x1="34" y1="15" x2="60" y2="15" stroke="#7cc4ff" marker-end="url(#ar6)"/>
+      <circle cx="80" cy="15" r="14" fill="#7cc4ff"/><text x="74" y="19" fill="#0f1115" font-size="10">B</text>
+      <line x1="94" y1="15" x2="120" y2="15" stroke="#7cc4ff" marker-end="url(#ar6)"/>
+      <circle cx="140" cy="15" r="14" fill="#7cc4ff"/><text x="134" y="19" fill="#0f1115" font-size="10">C</text>
+      <line x1="154" y1="15" x2="180" y2="15" stroke="#7cc4ff" marker-end="url(#ar6)"/>
+      <circle cx="200" cy="15" r="14" fill="#7cc4ff"/><text x="194" y="19" fill="#0f1115" font-size="10">D</text>
+      <line x1="214" y1="15" x2="240" y2="15" stroke="#7cc4ff" marker-end="url(#ar6)"/>
+      <circle cx="260" cy="15" r="14" fill="#7cc4ff"/><text x="252" y="19" fill="#0f1115" font-size="10">E</text>
+      <line x1="274" y1="15" x2="310" y2="15" stroke="#7cc4ff" marker-end="url(#ar6)"/>
+      <text x="320" y="19" fill="#7ee787" font-size="11" font-weight="700">→ output</text>
+    </g>
+
+    <line x1="20" y1="155" x2="1020" y2="155" stroke="#2a3142" stroke-dasharray="2 4"/>
+
+    <text x="20" y="175" fill="#ff6e6e" font-weight="700" font-size="13">With .item()</text>
+    <rect x="20" y="195" width="200" height="22" fill="#2a1414" stroke="#5a2a2a" stroke-width="2" stroke-dasharray="6 3" rx="6"/>
+    <g transform="translate(40, 195)">
+      <text x="14" y="15" fill="#ff6e6e" font-size="10" font-weight="700">NEFF #1: A → B</text>
+    </g>
+    <rect x="240" y="195" width="120" height="22" fill="#161a22" stroke="#ffb454" stroke-dasharray="3 2" rx="6"/>
+    <text x="252" y="210" fill="#ffb454" font-size="10" font-weight="700">.item() barrier</text>
+    <rect x="380" y="195" width="280" height="22" fill="#2a1414" stroke="#5a2a2a" stroke-width="2" stroke-dasharray="6 3" rx="6"/>
+    <text x="396" y="210" fill="#ff6e6e" font-size="10" font-weight="700">NEFF #2: C → D → E → output</text>
+    <text x="680" y="210" fill="#ff6e6e" font-size="11">→ no fusion across the barrier</text>
+  </g>
+</svg>
+<p class="caption">The compiler can't fuse ops on either side of <code>.item()</code> — it needs the
+intermediate scalar to make a Python decision, which means whatever was one graph is now two.
+Two compilations, two NEFFs, two launches.</p>
+
+<h3>Problem 3: shape-dependent recompilation cascade</h3>
+
+<svg viewBox="0 0 1040 250" width="100%">
+  <rect width="1040" height="250" fill="#0f1115"/>
+  <defs>
+    <marker id="ar7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="11">
+
+    <text x="20" y="30" fill="#e6e8ee" font-size="12">
+      <tspan font-weight="700">Source line:</tspan>
+      <tspan fill="#8b94a7">  </tspan>
+      <tspan fill="#c0a8ff">torch.arange(-rep.item(), rep.item()+1, ...)</tspan>
+    </text>
+
+    <g transform="translate(20, 60)" font-family="ui-monospace, monospace" font-size="11">
+      <rect x="0" y="0" width="300" height="40" fill="#161a22" stroke="#2a3142" rx="4"/>
+      <text x="14" y="25" fill="#e6e8ee">call 1: <tspan fill="#7cc4ff">rep.item() = 2</tspan>  → shape [5]</text>
+      <line x1="305" y1="20" x2="370" y2="20" stroke="#ffb454" stroke-width="2" marker-end="url(#ar7)"/>
+      <rect x="375" y="0" width="160" height="40" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+      <text x="389" y="25" fill="#ff6e6e" font-weight="700">compile NEFF_a</text>
+    </g>
+    <g transform="translate(20, 110)" font-family="ui-monospace, monospace" font-size="11">
+      <rect x="0" y="0" width="300" height="40" fill="#161a22" stroke="#2a3142" rx="4"/>
+      <text x="14" y="25" fill="#e6e8ee">call 2: <tspan fill="#7cc4ff">rep.item() = 3</tspan>  → shape [7]</text>
+      <line x1="305" y1="20" x2="370" y2="20" stroke="#ffb454" stroke-width="2" marker-end="url(#ar7)"/>
+      <rect x="375" y="0" width="160" height="40" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+      <text x="389" y="25" fill="#ff6e6e" font-weight="700">compile NEFF_b</text>
+    </g>
+    <g transform="translate(20, 160)" font-family="ui-monospace, monospace" font-size="11">
+      <rect x="0" y="0" width="300" height="40" fill="#161a22" stroke="#2a3142" rx="4"/>
+      <text x="14" y="25" fill="#e6e8ee">call 3: <tspan fill="#7cc4ff">rep.item() = 4</tspan>  → shape [9]</text>
+      <line x1="305" y1="20" x2="370" y2="20" stroke="#ffb454" stroke-width="2" marker-end="url(#ar7)"/>
+      <rect x="375" y="0" width="160" height="40" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+      <text x="389" y="25" fill="#ff6e6e" font-weight="700">compile NEFF_c</text>
+    </g>
+
+    <rect x="580" y="60" width="440" height="140" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="595" y="85" fill="#e6e8ee" font-weight="700" font-size="12">Why each value triggers a fresh NEFF</text>
+    <text x="595" y="108" fill="#8b94a7" font-size="11">The compiler sizes every output buffer at compile time.</text>
+    <text x="595" y="125" fill="#8b94a7" font-size="11"><tspan fill="#e6e8ee">arange(-rep, rep+1)</tspan> output shape = <tspan fill="#e6e8ee">2*rep + 1</tspan>.</text>
+    <text x="595" y="148" fill="#8b94a7" font-size="11">Different scalar value at the .item() boundary →</text>
+    <text x="595" y="163" fill="#8b94a7" font-size="11">different downstream tensor shape →</text>
+    <text x="595" y="178" fill="#8b94a7" font-size="11">cache miss in the graph compiler →</text>
+    <text x="595" y="193" fill="#ff6e6e" font-size="11" font-weight="700">recompile from scratch.</text>
+  </g>
+</svg>
+<p class="caption">When the <code>.item()</code> value drives a downstream tensor's shape, every distinct value
+becomes a new compilation. The Neuron compiler caches by graph signature, and the signature
+includes shapes.</p>
+
+<h3>What this looked like in our run</h3>
+
+<div class="grid2">
+<div class="panel">
+<h3 style="color:var(--bad)">347 NEFFs in eager mode</h3>
+<p>When we tried to capture an end-to-end profile in eager mode (<code>NEURON_RT_INSPECT_ENABLE=1</code>),
+the runtime dumped <strong>347 separate NEFF files</strong> for a single forward pass. Many of those came from this
+exact pattern: every <code>.item()</code> in <code>radius_graph_pbc</code>, every distinct PBC repeat count,
+every distinct PBC branch became a fresh compilation. Aggregating profile data across 347 NEFFs
+into a single timeline isn't supported by <code>neuron-explorer</code> today.</p>
+</div>
+<div class="panel">
+<h3 style="color:var(--bad)">torch.compile blocked</h3>
+<p>The dynamo backend can't trace EquiformerV3 end-to-end. <code>.item()</code> is one of the
+hard blockers — when dynamo sees a tensor value flow into Python control flow, it stops the
+trace and falls back to eager. Two of our four <code>.item()</code> calls drive <code>if</code>/<code>elif</code>
+branches, which forces a graph break <em>during tracing</em> on top of the runtime cost.</p>
+</div>
+</div>
+
+<div class="panel">
+<strong>The recommended fix.</strong> Move <code>radius_graph_pbc</code> outside the traced region — run graph
+construction on the host once, feed pre-built <code>edge_index</code>, <code>cell_offsets</code>, and <code>edge_distance_vec</code>
+into a fixed-shape forward. That removes all four <code>.item()</code> calls from the device path
+in one move, lets the rest of the model trace as a single graph, and is the same pattern we'd
+recommend to any customer porting a PyG-style model.
+</div>
+
 <h2>Results</h2>
 
 <div class="panel">
