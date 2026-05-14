@@ -653,6 +653,232 @@ in one move, lets the rest of the model trace as a single graph, and is the same
 recommend to any customer porting a PyG-style model.
 </div>
 
+<h2>Scatter / gather — the heart of GNN message passing</h2>
+
+<p>The <code>edge_index</code> tensor is a pointer-style index. Every layer of a graph neural network
+turns it into two operations: <strong>gather</strong> (look up source/target features for each edge) and
+<strong>scatter</strong> (aggregate edge messages back to nodes). This is the inner loop of every PyG model,
+including Equiformer.</p>
+
+<svg viewBox="0 0 1040 620" width="100%">
+  <rect width="1040" height="620" fill="#0f1115"/>
+  <defs>
+    <marker id="garr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+    <marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <!-- Tiny graph (4 nodes, 5 edges) -->
+    <text x="20" y="30" font-weight="700" font-size="14">Toy graph: 4 atoms, 5 edges</text>
+
+    <g transform="translate(80, 60)">
+      <circle cx="0"   cy="40" r="22" fill="#7cc4ff"/><text x="-6" y="44" fill="#0f1115" font-weight="700">v0</text>
+      <circle cx="120" cy="0"  r="22" fill="#7cc4ff"/><text x="114" y="4" fill="#0f1115" font-weight="700">v1</text>
+      <circle cx="120" cy="80" r="22" fill="#7cc4ff"/><text x="114" y="84" fill="#0f1115" font-weight="700">v2</text>
+      <circle cx="240" cy="40" r="22" fill="#7cc4ff"/><text x="234" y="44" fill="#0f1115" font-weight="700">v3</text>
+
+      <line x1="22" y1="35" x2="98" y2="5" stroke="#7ee787" stroke-width="2"/>
+      <line x1="22" y1="45" x2="98" y2="75" stroke="#7ee787" stroke-width="2"/>
+      <line x1="142" y1="0" x2="218" y2="35" stroke="#7ee787" stroke-width="2"/>
+      <line x1="142" y1="80" x2="218" y2="45" stroke="#7ee787" stroke-width="2"/>
+      <line x1="120" y1="22" x2="120" y2="58" stroke="#7ee787" stroke-width="2"/>
+
+      <text x="50"  y="14" fill="#7ee787" font-size="11">e0</text>
+      <text x="50"  y="76" fill="#7ee787" font-size="11">e1</text>
+      <text x="180" y="14" fill="#7ee787" font-size="11">e2</text>
+      <text x="180" y="76" fill="#7ee787" font-size="11">e3</text>
+      <text x="128" y="44" fill="#7ee787" font-size="11">e4</text>
+    </g>
+
+    <text x="380" y="80" fill="#8b94a7" font-size="11">edge_index = [</text>
+    <text x="380" y="100" fill="#e6e8ee" font-size="11">  src: [<tspan fill="#7cc4ff">0, 0, 1, 2, 1</tspan>],</text>
+    <text x="380" y="120" fill="#e6e8ee" font-size="11">  tgt: [<tspan fill="#ffb454">1, 2, 3, 3, 2</tspan>],</text>
+    <text x="380" y="140" fill="#8b94a7" font-size="11">]</text>
+
+    <text x="600" y="80" fill="#8b94a7" font-size="11">node features (atom embeddings):</text>
+    <rect x="600" y="92" width="42" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="613" y="107" fill="#c0a8ff">v0</text>
+    <rect x="644" y="92" width="42" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="657" y="107" fill="#c0a8ff">v1</text>
+    <rect x="688" y="92" width="42" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="701" y="107" fill="#c0a8ff">v2</text>
+    <rect x="732" y="92" width="42" height="22" fill="#1f1830" stroke="#4a3a7a"/><text x="745" y="107" fill="#c0a8ff">v3</text>
+    <text x="780" y="107" fill="#8b94a7" font-size="11">  shape [N=4, C]</text>
+
+    <line x1="20" y1="195" x2="1020" y2="195" stroke="#2a3142" stroke-dasharray="2 4"/>
+
+    <!-- ============= GATHER ============= -->
+    <text x="20" y="225" font-weight="700" font-size="14" fill="#7cc4ff">① Gather: per-edge → look up source features</text>
+    <text x="20" y="244" fill="#8b94a7" font-size="11">src_features = node_features[edge_index[0]]    <tspan fill="#e6e8ee">→ index_select / aten::index</tspan></text>
+
+    <g transform="translate(20, 260)">
+      <text x="0" y="14" fill="#8b94a7" font-size="11">node_features:</text>
+      <rect x="100" y="0" width="42" height="24" fill="#1f1830" stroke="#4a3a7a"/><text x="113" y="17" fill="#c0a8ff">v0</text>
+      <rect x="144" y="0" width="42" height="24" fill="#1f1830" stroke="#4a3a7a"/><text x="157" y="17" fill="#c0a8ff">v1</text>
+      <rect x="188" y="0" width="42" height="24" fill="#1f1830" stroke="#4a3a7a"/><text x="201" y="17" fill="#c0a8ff">v2</text>
+      <rect x="232" y="0" width="42" height="24" fill="#1f1830" stroke="#4a3a7a"/><text x="245" y="17" fill="#c0a8ff">v3</text>
+
+      <text x="350" y="14" fill="#8b94a7" font-size="11">edge_index[0]:</text>
+      <rect x="450" y="0" width="32" height="24" fill="#0a0d12" stroke="#7cc4ff"/><text x="461" y="17" fill="#7cc4ff">0</text>
+      <rect x="484" y="0" width="32" height="24" fill="#0a0d12" stroke="#7cc4ff"/><text x="495" y="17" fill="#7cc4ff">0</text>
+      <rect x="518" y="0" width="32" height="24" fill="#0a0d12" stroke="#7cc4ff"/><text x="529" y="17" fill="#7cc4ff">1</text>
+      <rect x="552" y="0" width="32" height="24" fill="#0a0d12" stroke="#7cc4ff"/><text x="563" y="17" fill="#7cc4ff">2</text>
+      <rect x="586" y="0" width="32" height="24" fill="#0a0d12" stroke="#7cc4ff"/><text x="597" y="17" fill="#7cc4ff">1</text>
+    </g>
+
+    <text x="20" y="320" fill="#8b94a7" font-size="11">src_features (per-edge):</text>
+    <rect x="180" y="306" width="42" height="24" fill="#1f1830" stroke="#7cc4ff"/><text x="193" y="323" fill="#c0a8ff">v0</text>
+    <rect x="224" y="306" width="42" height="24" fill="#1f1830" stroke="#7cc4ff"/><text x="237" y="323" fill="#c0a8ff">v0</text>
+    <rect x="268" y="306" width="42" height="24" fill="#1f1830" stroke="#7cc4ff"/><text x="281" y="323" fill="#c0a8ff">v1</text>
+    <rect x="312" y="306" width="42" height="24" fill="#1f1830" stroke="#7cc4ff"/><text x="325" y="323" fill="#c0a8ff">v2</text>
+    <rect x="356" y="306" width="42" height="24" fill="#1f1830" stroke="#7cc4ff"/><text x="369" y="323" fill="#c0a8ff">v1</text>
+    <text x="410" y="323" fill="#8b94a7" font-size="11">shape [E=5, C]</text>
+
+    <!-- arrows from edge_index[0] cells back to node_features -->
+    <line x1="466" y1="285" x2="121" y2="265" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="1.2" marker-end="url(#garr)"/>
+    <line x1="500" y1="285" x2="121" y2="265" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="1.2"/>
+    <line x1="534" y1="285" x2="165" y2="265" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="1.2"/>
+    <line x1="568" y1="285" x2="209" y2="265" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="1.2"/>
+    <line x1="602" y1="285" x2="165" y2="265" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="1.2"/>
+
+    <line x1="20" y1="350" x2="1020" y2="350" stroke="#2a3142" stroke-dasharray="2 4"/>
+
+    <!-- ============= SCATTER ============= -->
+    <text x="20" y="378" font-weight="700" font-size="14" fill="#ffb454">② Scatter: per-edge messages → aggregated back into nodes</text>
+    <text x="20" y="397" fill="#8b94a7" font-size="11">node_out.scatter_add_(0, edge_index[1], messages)    <tspan fill="#e6e8ee">→ scatter_add / index_add_</tspan></text>
+
+    <g transform="translate(20, 420)">
+      <text x="0" y="14" fill="#8b94a7" font-size="11">messages (per-edge):</text>
+      <rect x="160" y="0" width="42" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="173" y="17" fill="#ffb454">m0</text>
+      <rect x="204" y="0" width="42" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="217" y="17" fill="#ffb454">m1</text>
+      <rect x="248" y="0" width="42" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="261" y="17" fill="#ffb454">m2</text>
+      <rect x="292" y="0" width="42" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="305" y="17" fill="#ffb454">m3</text>
+      <rect x="336" y="0" width="42" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="349" y="17" fill="#ffb454">m4</text>
+
+      <text x="430" y="14" fill="#8b94a7" font-size="11">edge_index[1]:</text>
+      <rect x="530" y="0" width="32" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="541" y="17" fill="#ffb454">1</text>
+      <rect x="564" y="0" width="32" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="575" y="17" fill="#ffb454">2</text>
+      <rect x="598" y="0" width="32" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="609" y="17" fill="#ffb454">3</text>
+      <rect x="632" y="0" width="32" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="643" y="17" fill="#ffb454">3</text>
+      <rect x="666" y="0" width="32" height="24" fill="#0a0d12" stroke="#ffb454"/><text x="677" y="17" fill="#ffb454">2</text>
+    </g>
+
+    <text x="20" y="510" fill="#8b94a7" font-size="11">node_out (size N=4):</text>
+    <rect x="160" y="496" width="92" height="28" fill="#0a0d12" stroke="#ffb454"/>
+    <text x="180" y="514" fill="#8b94a7" font-size="10">v0: 0</text>
+
+    <rect x="254" y="496" width="92" height="28" fill="#0a0d12" stroke="#ffb454"/>
+    <text x="266" y="514" fill="#ffb454" font-size="10">v1: m0</text>
+
+    <rect x="348" y="496" width="92" height="28" fill="#0a0d12" stroke="#ffb454"/>
+    <text x="358" y="514" fill="#ffb454" font-size="10" font-weight="700">v2: m1+m4</text>
+
+    <rect x="442" y="496" width="92" height="28" fill="#0a0d12" stroke="#ffb454"/>
+    <text x="452" y="514" fill="#ffb454" font-size="10" font-weight="700">v3: m2+m3</text>
+
+    <text x="550" y="514" fill="#ff6e6e" font-size="11" font-weight="700">← collision: 2 messages → same node</text>
+
+    <!-- arrows from messages to outputs -->
+    <line x1="181" y1="448" x2="290" y2="494" stroke="#ffb454" stroke-opacity="0.6" stroke-width="1.2" marker-end="url(#sarr)"/>
+    <line x1="225" y1="448" x2="380" y2="494" stroke="#ffb454" stroke-opacity="0.6" stroke-width="1.2" marker-end="url(#sarr)"/>
+    <line x1="269" y1="448" x2="470" y2="494" stroke="#ffb454" stroke-opacity="0.6" stroke-width="1.2" marker-end="url(#sarr)"/>
+    <line x1="313" y1="448" x2="478" y2="494" stroke="#ffb454" stroke-opacity="0.6" stroke-width="1.2" marker-end="url(#sarr)"/>
+    <line x1="357" y1="448" x2="395" y2="494" stroke="#ffb454" stroke-opacity="0.6" stroke-width="1.2" marker-end="url(#sarr)"/>
+
+    <text x="20" y="562" fill="#8b94a7" font-size="11">Note: m1 and m4 both target v2; m2 and m3 both target v3. The reduction</text>
+    <text x="20" y="578" fill="#8b94a7" font-size="11">(<tspan fill="#e6e8ee">add</tspan> here, but it could be <tspan fill="#e6e8ee">mean</tspan> or <tspan fill="#e6e8ee">max</tspan>) handles the collisions.</text>
+    <text x="20" y="594" fill="#8b94a7" font-size="11">v0 has no incoming edges → stays zero.</text>
+  </g>
+</svg>
+<p class="caption">A single GNN layer = gather source/target features → compute messages → scatter
+into nodes. <code>edge_index</code> is the indirection table that drives both directions.</p>
+
+<h3>Why scatter/gather is hard on accelerators</h3>
+
+<div class="grid2">
+<div class="panel">
+<h3 style="color:var(--bad)">Random memory access</h3>
+<p>Matmul hardware loves contiguous, predictable memory. Scatter writes go to <em>arbitrary</em>
+addresses determined at runtime by <code>edge_index</code>. The compiler can't prefetch, can't
+align to partition boundaries, can't fuse cleanly with surrounding ops.</p>
+</div>
+<div class="panel">
+<h3 style="color:var(--bad)">Atomic accumulation</h3>
+<p>The collisions in the diagram (multiple messages → same target node) require atomic adds
+in hardware. Trainium supports this for <code>scatter_add_</code> / <code>index_add_</code> via
+<code>nisa.dma_compute(reduce_op=add)</code>, but the implementation has constraints
+(unique-index hint required for some variants).</p>
+</div>
+<div class="panel">
+<h3 style="color:var(--bad)">Output shape sometimes data-dependent</h3>
+<p><code>scatter_reduce.two_out</code> returns <em>both</em> reduced values <em>and</em> argmax indices.
+The argmax tensor has shape [N] but its <em>contents</em> depend on input values — a category C
+problem from the previous section. This variant falls back on Neuron today.</p>
+</div>
+<div class="panel">
+<h3 style="color:var(--good)">What does work well</h3>
+<p><code>aten::index_select</code> (the gather side) and <code>aten::index_add_</code> (scatter-add by
+index) both ran on Neuron in our profile. The basic message-passing primitive is supported —
+it's the variants and reductions that have gaps.</p>
+</div>
+</div>
+
+<h3>Where each scatter/gather variant lives in our profile</h3>
+
+<table>
+  <thead><tr><th>Op</th><th>What it does</th><th>Used for</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>aten::index_select</code></td>
+      <td>Gather rows of a tensor by index</td>
+      <td><code>node_features[edge_index[0]]</code> — source features per edge</td>
+      <td><span class="tag good">On Neuron</span></td>
+    </tr>
+    <tr>
+      <td><code>aten::index</code></td>
+      <td>Generalized advanced indexing</td>
+      <td><code>atomic_numbers[edge_index[0]]</code> — source atom types</td>
+      <td><span class="tag good">On Neuron</span></td>
+    </tr>
+    <tr>
+      <td><code>aten::index_add_</code></td>
+      <td>Scatter-add by index along a dim</td>
+      <td>Aggregating node energies into total energy per system</td>
+      <td><span class="tag good">On Neuron</span></td>
+    </tr>
+    <tr>
+      <td><code>scatter_add_</code></td>
+      <td>Generic scatter-add (any reduction dim)</td>
+      <td>The PyG <code>scatter</code> entry point used by Equiformer's softmax + aggregations</td>
+      <td><span class="tag good">On Neuron</span> (via shim)</td>
+    </tr>
+    <tr>
+      <td><code>aten::scatter_reduce.two_out</code></td>
+      <td>Scatter reduce returning <em>both</em> values and indices (e.g., max + argmax)</td>
+      <td>Used by some attention paths to find max-edge per node</td>
+      <td><span class="tag bad">CPU fallback</span></td>
+    </tr>
+    <tr>
+      <td><code>aten::repeat_interleave.Tensor</code></td>
+      <td>Broadcast per-node values to per-edge with variable counts</td>
+      <td>Equiformer's irrep-aware softmax (<code>softmax.py:57, 63</code>)</td>
+      <td><span class="tag bad">CPU fallback</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="panel">
+<strong>Why this matters for the customer story.</strong> Every PyG/DGL model <em>is</em> these primitives —
+gather to source/target, compute, scatter back. Trainium's support is mostly there but
+asymmetric: the basic ops work, the multi-output reductions don't. For Equiformer we shim
+around <code>scatter_reduce.two_out</code>; for OpenFold or ESM3 the gap might be elsewhere
+(<code>scatter_softmax</code>, <code>segment_max_csr</code>). A first-class <code>torch_scatter</code> /
+<code>torch_geometric</code> integration would cover the variant landscape in one shot rather than
+customer-by-customer.
+</div>
+
 <h2>Results</h2>
 
 <div class="panel">
