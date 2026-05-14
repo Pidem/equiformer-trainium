@@ -221,6 +221,24 @@ def patch_expand_index_int32(model):
                 m.expand_index = buf.to(torch.int32)
 
 
+def patch_wigner_nki_kernel():
+    """
+    Replace wigner._z_rot_mat with the NKI kernel implementation.
+    The kernel produces M[b, i, j] for the cos-diagonal/sin-antidiagonal
+    pattern using a single fused HBM-to-HBM call instead of the dispatcher
+    chain (3x arange, 2x sin/cos, 2x advanced index_put, 1x mul).
+    """
+    from nki_z_rot_mat import z_rot_mat_nki
+
+    def _z_rot_mat_with_kernel(angle, l):
+        """
+        Wrapper that calls the NKI kernel for any leading shape of `angle`.
+        """
+        return z_rot_mat_nki(angle, l)
+
+    wigner._z_rot_mat = _z_rot_mat_with_kernel
+
+
 def main():
     data_cpu, n_atoms = build_data()
     print(f"Compound: NaCl supercell, {n_atoms} atoms, "
@@ -266,6 +284,12 @@ def main():
     """
     patch_expand_index_int32(model)
     step("+ expand_index_int32", model, data, base_e, base_f)
+
+    """
+    Step 3: replace wigner._z_rot_mat with the NKI kernel.
+    """
+    patch_wigner_nki_kernel()
+    step("+ wigner_nki_kernel", model, data, base_e, base_f)
 
     print()
     print("rel ΔE / rel ΔF are |error| / max(|baseline|, 1.0).")

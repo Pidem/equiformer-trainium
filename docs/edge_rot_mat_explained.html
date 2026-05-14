@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Edge Rotation Matrix — Visual Walkthrough</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --ink: #e6e8ee;
+    --muted: #8b94a7;
+    --accent: #7cc4ff;
+    --warn: #ffb454;
+    --bad:  #ff6e6e;
+    --good: #7ee787;
+    --line: #2a3142;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif; line-height: 1.55; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 { font-size: 20px; margin: 36px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; color: var(--accent); }
+  p  { margin: 8px 0; }
+  .lede { color: var(--muted); margin-bottom: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 14px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  code, pre { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+  pre { background: #0a0d12; padding: 12px 14px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--line); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--line); }
+  .tag.bad  { color: var(--bad);  border-color: #5a2a2a; background: #2a1414; }
+  .tag.good { color: var(--good); border-color: #285c30; background: #133420; }
+  .tag.warn { color: var(--warn); border-color: #5a4422; background: #2a1f10; }
+  .kbd { font-family: ui-monospace, monospace; background: #1c2230; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  svg { display: block; margin: 8px auto; }
+  .caption { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; font-size: 12px; color: var(--muted); }
+  .legend i { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>The Per-Edge Rotation Matrix</h1>
+<p class="lede">A visual walkthrough of <code>init_edge_rot_mat</code> in EquiformerV3 — what it computes,
+why it exists, and why it forces tensors back to the CPU on Neuron.</p>
+
+<div class="panel">
+  <strong>File:</strong>
+  <code>equiformer_v3/src/fairchem/experimental/models/equiformer_v3/edge_rot_mat.py:11</code><br>
+  <strong>Caller:</strong>
+  <code>EquiformerV3._forward_edge</code> — runs once per forward pass, on every edge in the graph.
+</div>
+
+<h2>1. What is an "edge" and why does it need a rotation?</h2>
+
+<p>EquiformerV3 is a graph neural network for atomic systems. Atoms are nodes; an "edge" connects two atoms within
+some cutoff radius. For your NaCl run there were <strong>24 atoms and 460 edges</strong>.</p>
+
+<p>The model is <em>equivariant</em>: rotating the input molecule should rotate the predicted forces in the same way.
+To enforce that, it expresses every interaction along an edge in a <strong>local frame</strong> aligned with the edge
+direction — and then transforms features back with Wigner-D matrices. <code>init_edge_rot_mat</code> builds that
+local frame for every edge.</p>
+
+<svg viewBox="0 0 800 240" width="100%">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="240" fill="#0f1115"/>
+
+  <g font-family="ui-monospace, monospace" font-size="11" fill="#e6e8ee">
+    <text x="80"  y="30" fill="#8b94a7">A "ball-and-stick" molecule (atoms = nodes, edges = bonds within cutoff)</text>
+
+    <circle cx="120" cy="120" r="18" fill="#7cc4ff"/><text x="113" y="125">Na</text>
+    <circle cx="240" cy="80"  r="18" fill="#ffb454"/><text x="233" y="85">Cl</text>
+    <circle cx="260" cy="180" r="18" fill="#ffb454"/><text x="253" y="185">Cl</text>
+    <circle cx="380" cy="120" r="18" fill="#7cc4ff"/><text x="373" y="125">Na</text>
+
+    <line x1="138" y1="115" x2="222" y2="86"  stroke="#7ee787" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="138" y1="125" x2="242" y2="175" stroke="#7ee787" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="258" y1="85"  x2="362" y2="115" stroke="#7ee787" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="278" y1="180" x2="362" y2="128" stroke="#7ee787" stroke-width="2" marker-end="url(#arr)"/>
+
+    <text x="180" y="80"  fill="#7ee787">edge</text>
+    <text x="180" y="170" fill="#7ee787">edge</text>
+
+    <text x="500" y="55"  fill="#8b94a7">For one edge i→j, the displacement vector is:</text>
+    <text x="500" y="80"  fill="#e6e8ee" font-size="13">r_ij = pos[j] − pos[i]   (shape: [3])</text>
+    <text x="500" y="115" fill="#8b94a7">For 460 edges:</text>
+    <text x="500" y="140" fill="#e6e8ee" font-size="13">edge_distance_vec.shape = [460, 3]</text>
+    <text x="500" y="180" fill="#8b94a7">Goal:</text>
+    <text x="500" y="200" fill="#e6e8ee" font-size="13">edge_rot_mat.shape   = [460, 3, 3]</text>
+    <text x="500" y="220" fill="#8b94a7">— one 3×3 rotation per edge.</text>
+  </g>
+</svg>
+<p class="caption">Figure 1. One rotation matrix per edge converts global xyz coordinates into the edge's local frame.</p>
+
+<h2>2. The construction — Gram–Schmidt with a random tiebreaker</h2>
+
+<p>For each edge we need three orthogonal unit vectors <span style="color:var(--bad)">x̂</span>,
+<span style="color:var(--good)">ŷ</span>, <span style="color:var(--accent)">ẑ</span>. The first one is easy — it's the
+edge itself. The other two are built so that <span style="color:var(--bad)">x̂</span> aligns with the model's
+canonical y-axis after rotation.</p>
+
+<svg viewBox="0 0 820 360" width="100%">
+  <rect x="0" y="0" width="820" height="360" fill="#0f1115"/>
+  <g font-family="ui-monospace, monospace" font-size="12">
+
+    <g transform="translate(140, 180)">
+      <line x1="-100" y1="0" x2="100" y2="0" stroke="#2a3142"/>
+      <line x1="0" y1="-100" x2="0" y2="100" stroke="#2a3142"/>
+      <line x1="0" y1="0" x2="80" y2="-50" stroke="#ff6e6e" stroke-width="3" marker-end="url(#arr2)"/>
+      <text x="55" y="-58" fill="#ff6e6e" font-size="13">x̂ = r/‖r‖</text>
+      <text x="-110" y="130" fill="#8b94a7">Step 1: x̂ from edge vector</text>
+    </g>
+
+    <g transform="translate(380, 180)">
+      <line x1="-100" y1="0" x2="100" y2="0" stroke="#2a3142"/>
+      <line x1="0" y1="-100" x2="0" y2="100" stroke="#2a3142"/>
+      <line x1="0" y1="0" x2="80" y2="-50" stroke="#ff6e6e" stroke-width="3" marker-end="url(#arr2)"/>
+      <line x1="0" y1="0" x2="-30" y2="-80" stroke="#8b94a7" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arr2)"/>
+      <text x="-90" y="-70" fill="#8b94a7" font-size="13">edge_vec_2</text>
+      <text x="-90" y="-55" fill="#8b94a7" font-size="11">(random)</text>
+      <text x="-130" y="130" fill="#8b94a7">Step 2: pick a non-parallel vector</text>
+      <rect x="-130" y="148" width="260" height="22" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+      <text x="-122" y="163" fill="#ff6e6e">⚠ aten::uniform_ → CPU fallback</text>
+    </g>
+
+    <g transform="translate(640, 180)">
+      <line x1="-100" y1="0" x2="100" y2="0" stroke="#2a3142"/>
+      <line x1="0" y1="-100" x2="0" y2="100" stroke="#2a3142"/>
+      <line x1="0" y1="0" x2="80" y2="-50" stroke="#ff6e6e" stroke-width="3" marker-end="url(#arr2)"/>
+      <line x1="0" y1="0" x2="50" y2="80" stroke="#7cc4ff" stroke-width="3" marker-end="url(#arr2)"/>
+      <line x1="0" y1="0" x2="-90" y2="-15" stroke="#7ee787" stroke-width="3" marker-end="url(#arr2)"/>
+      <text x="55" y="-58" fill="#ff6e6e">x̂</text>
+      <text x="55" y="95" fill="#7cc4ff">ẑ = x̂ × edge_vec_2</text>
+      <text x="-130" y="-15" fill="#7ee787">ŷ = x̂ × ẑ</text>
+      <text x="-100" y="130" fill="#8b94a7">Step 3: two cross products</text>
+      <rect x="-100" y="148" width="220" height="22" fill="#2a1414" stroke="#5a2a2a" rx="4"/>
+      <text x="-92" y="163" fill="#ff6e6e">⚠ aten::linalg_cross → CPU ×2</text>
+    </g>
+  </g>
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+</svg>
+<p class="caption">Figure 2. The three-step construction. The two highlighted ops are not implemented in the Neuron backend.</p>
+
+<h3>The actual code, annotated</h3>
+<pre>norm_x      = edge_vec_0 / ‖edge_vec_0‖                       <span class="tag good">Neuron</span>
+
+edge_vec_2  = torch.rand_like(edge_vec_0) - 0.5               <span class="tag bad">CPU fallback (uniform_)</span>
+edge_vec_2 /= ‖edge_vec_2‖
+
+# tiebreaker: try 90°-rotated copies if random vec ≈ parallel to x̂
+edge_vec_2b, edge_vec_2c = ...rotated copies...               <span class="tag good">Neuron</span>
+edge_vec_2  = where(|x̂·v| largest, swap)                     <span class="tag good">Neuron</span>
+
+norm_z = torch.cross(norm_x, edge_vec_2, dim=1)               <span class="tag bad">CPU fallback (linalg_cross)</span>
+norm_z = norm_z / ‖norm_z‖
+norm_y = torch.cross(norm_x, norm_z, dim=1)                   <span class="tag bad">CPU fallback (linalg_cross)</span>
+
+edge_rot_mat = stack([ẑ, x̂, ŷ]).transpose(1, 2)              <span class="tag good">Neuron</span></pre>
+
+<h2>3. The shape pipeline</h2>
+
+<table>
+  <thead><tr><th>Variable</th><th>Shape</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>edge_distance_vec</code></td><td>[460, 3]</td><td>Δposition for each edge</td></tr>
+    <tr><td><code>norm_x</code></td><td>[460, 3]</td><td>unit vector along the edge</td></tr>
+    <tr><td><code>edge_vec_2</code></td><td>[460, 3]</td><td>auxiliary unit vector, not parallel to x̂</td></tr>
+    <tr><td><code>norm_z</code></td><td>[460, 3]</td><td>x̂ × edge_vec_2, then normalized</td></tr>
+    <tr><td><code>norm_y</code></td><td>[460, 3]</td><td>x̂ × ẑ</td></tr>
+    <tr><td><code>edge_rot_mat</code></td><td>[460, 3, 3]</td><td>final rotation per edge</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Why it lands on the CPU</h2>
+
+<p>Two ops in this routine are not implemented in the Neuron backend:</p>
+
+<div class="grid2">
+  <div class="panel">
+    <span class="tag bad">aten::linalg_cross</span>
+    <p style="margin-top:8px"><code>torch.cross(a, b, dim=1)</code> — invoked twice, once for ẑ and once for ŷ. The Neuron
+    runtime intercepts the call, copies <code>a</code> and <code>b</code> back to host memory, runs the cross
+    product on CPU, and copies the result back to the device.</p>
+  </div>
+  <div class="panel">
+    <span class="tag bad">aten::uniform_</span>
+    <p style="margin-top:8px"><code>torch.rand_like(...)</code> — used to pick a "random" auxiliary vector to ensure
+    non-collinearity with x̂. The on-device RNG isn't wired up, so this also bounces through the host.</p>
+  </div>
+</div>
+
+<svg viewBox="0 0 820 220" width="100%">
+  <rect width="820" height="220" fill="#0f1115"/>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+    <rect x="40" y="60" width="180" height="80" fill="#133420" stroke="#285c30" rx="6"/>
+    <text x="65" y="85" fill="#7ee787">Neuron device</text>
+    <text x="65" y="108" fill="#8b94a7">tensors live here</text>
+    <text x="65" y="126" fill="#8b94a7">most ops run here</text>
+
+    <rect x="600" y="60" width="180" height="80" fill="#2a1414" stroke="#5a2a2a" rx="6"/>
+    <text x="630" y="85" fill="#ff6e6e">CPU host</text>
+    <text x="630" y="108" fill="#8b94a7">linalg_cross runs</text>
+    <text x="630" y="126" fill="#8b94a7">uniform_ runs</text>
+
+    <line x1="220" y1="90"  x2="600" y2="90"  stroke="#ffb454" stroke-width="2" marker-end="url(#arr3)"/>
+    <line x1="600" y1="115" x2="220" y2="115" stroke="#ffb454" stroke-width="2" marker-end="url(#arr3)"/>
+
+    <text x="290" y="80" fill="#ffb454">aten::_to_copy  (D → H)</text>
+    <text x="290" y="135" fill="#ffb454">aten::_to_copy  (H → D)</text>
+
+    <text x="40"  y="180" fill="#8b94a7">Per forward pass, this round-trip happens for every fallback op invocation.</text>
+    <text x="40"  y="200" fill="#e6e8ee">Profiler observed: <tspan fill="#ff6e6e">aten::_to_copy ×1235  →  ~502 ms self_cpu_time</tspan></text>
+  </g>
+  <defs>
+    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffb454"/>
+    </marker>
+  </defs>
+</svg>
+<p class="caption">Figure 3. Each fallback op forces a device→host→device round-trip. The transfer cost dwarfs the op itself.</p>
+
+<h2>5. Where this fits in the overall forward pass</h2>
+
+<svg viewBox="0 0 820 320" width="100%">
+  <rect width="820" height="320" fill="#0f1115"/>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <rect x="40"  y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="55"  y="68">graph construction</text>
+
+    <rect x="40"  y="110" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="55"  y="138">edge distances</text>
+
+    <rect x="40"  y="180" width="180" height="46" fill="#2a1f10" stroke="#5a4422" rx="6"/>
+    <text x="55"  y="208" fill="#ffb454">init_edge_rot_mat  ★</text>
+
+    <rect x="320" y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="335" y="68">Wigner-D from rot_mat</text>
+
+    <rect x="320" y="110" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="335" y="138">radial basis (envelope)</text>
+
+    <rect x="320" y="180" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="335" y="208">embedding, attention</text>
+
+    <rect x="600" y="110" width="180" height="46" fill="#133420" stroke="#285c30" rx="6"/>
+    <text x="620" y="138" fill="#7ee787">energy + forces</text>
+
+    <line x1="220" y1="62"  x2="320" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#arr4)"/>
+    <line x1="220" y1="132" x2="320" y2="132" stroke="#7cc4ff" stroke-width="2" marker-end="url(#arr4)"/>
+    <line x1="220" y1="202" x2="320" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#arr4)"/>
+    <line x1="500" y1="132" x2="600" y2="132" stroke="#7cc4ff" stroke-width="2" marker-end="url(#arr4)"/>
+    <line x1="500" y1="202" x2="600" y2="146" stroke="#7cc4ff" stroke-width="2" marker-end="url(#arr4)"/>
+
+    <text x="40" y="280" fill="#8b94a7">★ runs once per forward pass — produces edge_rot_mat[E, 3, 3] consumed by the Wigner-D code path.</text>
+  </g>
+  <defs>
+    <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+</svg>
+
+<h2>6. Why this matters for performance</h2>
+
+<table>
+  <thead><tr><th>Op</th><th>Where it appears</th><th>Backend</th><th>Cost driver</th></tr></thead>
+  <tbody>
+    <tr><td><code>torch.rand_like</code></td><td>line 35</td><td><span class="tag bad">CPU</span></td><td>round-trip</td></tr>
+    <tr><td><code>torch.cross</code></td><td>line 67</td><td><span class="tag bad">CPU</span></td><td>round-trip</td></tr>
+    <tr><td><code>torch.cross</code></td><td>line 74</td><td><span class="tag bad">CPU</span></td><td>round-trip</td></tr>
+    <tr><td>everything else</td><td>—</td><td><span class="tag good">Neuron</span></td><td>—</td></tr>
+  </tbody>
+</table>
+
+<p>From the profiler: <code>aten::_to_copy</code> alone accounted for ~<strong>502 ms</strong> of CPU time across
+1,235 invocations in one forward pass. The cross product itself is three multiplies and three subtractions —
+trivial on-device — but the host round-trip dominates.</p>
+
+<h3>Pure-PyTorch replacement (already executes on Neuron)</h3>
+<pre>def cross_dim1(a, b):
+    return torch.stack([
+        a[:, 1] * b[:, 2] - a[:, 2] * b[:, 1],
+        a[:, 2] * b[:, 0] - a[:, 0] * b[:, 2],
+        a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0],
+    ], dim=1)</pre>
+
+<p>And the random tiebreaker can be replaced with a deterministic non-axis-aligned constant
+(<code>[1, 1, 1] / √3</code>), since its only requirement is "not parallel to x̂".</p>
+
+<div class="panel">
+  <strong>Bottom line.</strong> <code>init_edge_rot_mat</code> is a small, well-defined geometry routine that builds a
+  per-edge orthonormal frame. It looks innocent in PyTorch — three lines of cross-product and normalize — but two of
+  its calls trigger CPU fallback, and because it runs over every edge each forward pass, the resulting host↔device
+  traffic is the single largest CPU-time line item in the profile. Rewriting <code>cross</code> as explicit indexing
+  and replacing the RNG with a constant would eliminate the round-trips entirely.
+</div>
+
+</main>
+</body>
+</html>
