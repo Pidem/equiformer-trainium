@@ -85,6 +85,176 @@ in-place on the previous model. Numerical equivalence is verified after every pa
   </tbody>
 </table>
 
+<h2>What the model takes as input</h2>
+
+<p>Equiformer is a graph neural network for atomic systems. The input is a single batched
+"data" object containing the atoms and the bonds within a cutoff radius.</p>
+
+<table>
+  <thead><tr><th>Field</th><th>Shape</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>atomic_numbers</code></td><td>[N=24]</td><td>Z for each atom (Na=11, Cl=17)</td></tr>
+    <tr><td><code>pos</code></td><td>[N=24, 3]</td><td>3D Cartesian position of each atom (Å)</td></tr>
+    <tr><td><code>cell</code></td><td>[1, 3, 3]</td><td>The unit-cell lattice vectors (for periodic boundary conditions)</td></tr>
+    <tr><td><code>natoms</code></td><td>[batch=1]</td><td>How many atoms are in each system in the batch</td></tr>
+    <tr><td><code>edge_index</code></td><td>[2, E=460]</td><td>For each edge: <code>[source_atom, target_atom]</code>. Built on-the-fly from a 6 Å radius cutoff</td></tr>
+    <tr><td><code>cell_offsets</code></td><td>[E=460, 3]</td><td>For PBC: which periodic image of the target atom this edge points to</td></tr>
+    <tr><td><code>batch</code></td><td>[N=24]</td><td>Which system in the batch each atom belongs to (all zero here — single system)</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Output</strong> of the forward pass:</p>
+<pre>{
+  "energy":  [batch=1]    <span style="color:var(--muted)"># total energy of the system (eV)</span>
+  "forces":  [N=24, 3]    <span style="color:var(--muted)"># force on each atom (eV/Å)</span>
+}</pre>
+
+<h2>The forward pass — what each layer does and which ops it uses</h2>
+
+<p>The model has five logical stages. The diagram below shows how the input tensors flow
+through them, and which raw PyTorch ops each stage actually dispatches.</p>
+
+<svg viewBox="0 0 1040 600" width="100%">
+  <rect width="1040" height="600" fill="#0f1115"/>
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <!-- Stage 1: graph generation -->
+    <rect x="20"  y="40" width="240" height="76" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="35"  y="60" font-weight="700">① Graph generation</text>
+    <text x="35"  y="78"  fill="#8b94a7" font-size="11">radius_graph_pbc(pos, cell, r=6Å)</text>
+    <text x="35"  y="94"  fill="#8b94a7" font-size="11">output: edge_index [2, E]</text>
+    <text x="35"  y="110" fill="#8b94a7" font-size="11">         edge_distance_vec [E, 3]</text>
+
+    <!-- Stage 2: edge frame -->
+    <rect x="300" y="40" width="240" height="76" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="315" y="60" font-weight="700">② Per-edge rotation frame</text>
+    <text x="315" y="78"  fill="#8b94a7" font-size="11">init_edge_rot_mat(edge_distance_vec)</text>
+    <text x="315" y="94"  fill="#8b94a7" font-size="11">+ Wigner-D from rot_mat (lmax=2)</text>
+    <text x="315" y="110" fill="#8b94a7" font-size="11">output: wigner [E, 9, 9]</text>
+
+    <!-- Stage 3: embedding -->
+    <rect x="580" y="40" width="240" height="76" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="595" y="60" font-weight="700">③ Atom embedding</text>
+    <text x="595" y="78"  fill="#8b94a7" font-size="11">sphere_embedding(atomic_numbers)</text>
+    <text x="595" y="94"  fill="#8b94a7" font-size="11">+ edge_degree_embedding</text>
+    <text x="595" y="110" fill="#8b94a7" font-size="11">output: x [N, (lmax+1)², C=32]</text>
+
+    <!-- Stage 4: blocks -->
+    <rect x="20"  y="180" width="520" height="106" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="35"  y="200" font-weight="700">④ Transformer blocks (×2 layers)</text>
+    <text x="35"  y="218" fill="#8b94a7" font-size="11">SO(3) attention: Q·K with edge-weighted softmax</text>
+    <text x="35"  y="234" fill="#8b94a7" font-size="11">SO(2) convolution (uses Wigner from ②)</text>
+    <text x="35"  y="250" fill="#8b94a7" font-size="11">Equivariant FFN with grid mixing</text>
+    <text x="35"  y="266" fill="#8b94a7" font-size="11">layer_norm + residual</text>
+    <text x="35"  y="282" fill="#8b94a7" font-size="11">output: x [N, (lmax+1)², C=32]  /  x_scalar [N, C]</text>
+
+    <!-- Stage 5: heads -->
+    <rect x="580" y="180" width="240" height="106" fill="#133420" stroke="#285c30" rx="6"/>
+    <text x="595" y="200" font-weight="700" fill="#7ee787">⑤ Output heads</text>
+    <text x="595" y="218" fill="#8b94a7" font-size="11">energy_block(x_scalar) → [batch]</text>
+    <text x="595" y="234" fill="#8b94a7" font-size="11">force_block(x, edge_*) → [N, 3]</text>
+    <text x="595" y="266" fill="#8b94a7" font-size="11">scatter atom-energies via index_add_</text>
+
+    <!-- Op color bar -->
+    <rect x="20"  y="320" width="800" height="200" fill="#0a0d12" stroke="#2a3142" rx="6"/>
+    <text x="35" y="340" font-weight="700" fill="#7cc4ff">Ops dispatched per stage</text>
+
+    <text x="35" y="362" fill="#8b94a7" font-size="11">①</text>
+    <text x="55" y="362" fill="#ff6e6e" font-size="11">torch.cross</text>
+    <text x="135" y="362" fill="#ff6e6e" font-size="11">.item()</text>
+    <text x="195" y="362" fill="#ff6e6e" font-size="11">arange.start_out</text>
+    <text x="305" y="362" fill="#ff6e6e" font-size="11">sort.values_stable</text>
+    <text x="425" y="362" fill="#e6e8ee" font-size="11">cat, view, bmm, repeat_interleave, masked_select</text>
+
+    <text x="35" y="386" fill="#8b94a7" font-size="11">②</text>
+    <text x="55" y="386" fill="#ff6e6e" font-size="11">torch.cross ×2</text>
+    <text x="155" y="386" fill="#ff6e6e" font-size="11">torch.rand_like</text>
+    <text x="265" y="386" fill="#ff6e6e" font-size="11">atan2</text>
+    <text x="305" y="386" fill="#ff6e6e" font-size="11">acos</text>
+    <text x="345" y="386" fill="#e6e8ee" font-size="11">arange ×N, sin/cos, index_put_, bmm (J·X chain)</text>
+
+    <text x="35" y="410" fill="#8b94a7" font-size="11">③</text>
+    <text x="55" y="410" fill="#e6e8ee" font-size="11">embedding, index_select, scatter_add, gate_act</text>
+
+    <text x="35" y="434" fill="#8b94a7" font-size="11">④</text>
+    <text x="55" y="434" fill="#e6e8ee" font-size="11">linear (matmul), softmax, layer_norm, silu, sigmoid</text>
+    <text x="55" y="450" fill="#e6e8ee" font-size="11">     bmm, einsum-like contractions, scatter_add, index_select</text>
+
+    <text x="35" y="474" fill="#8b94a7" font-size="11">⑤</text>
+    <text x="55" y="474" fill="#e6e8ee" font-size="11">linear, index_add_, narrow, reshape</text>
+
+    <text x="35" y="500" fill="#8b94a7" font-size="11">Legend:</text>
+    <text x="100" y="500" fill="#ff6e6e" font-size="11">red = falls back to CPU</text>
+    <text x="290" y="500" fill="#e6e8ee" font-size="11">white = on-Neuron</text>
+
+    <!-- arrows -->
+    <line x1="260" y1="78"  x2="300" y2="78"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="540" y1="78"  x2="580" y2="78"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="700" y1="116" x2="280" y2="180" stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="540" y1="230" x2="580" y2="230" stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar2)"/>
+
+  </g>
+</svg>
+<p class="caption">Figure: forward-pass stages, the tensors that flow between them, and the
+PyTorch ops each stage uses. Red ops are the ones that triggered CPU fallback in our profile.</p>
+
+<h3>Where each stage's time goes</h3>
+
+<table>
+  <thead>
+    <tr><th>Stage</th><th>What it does</th><th>Hot ops</th><th>CPU-fallback risk</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>① Graph</td>
+      <td>Builds <code>edge_index</code> from positions + cell. PBC requires figuring out how many cell repeats are needed in each direction.</td>
+      <td><code>torch.cross</code> (cell volume), <code>arange</code>, <code>sort</code>, host syncs (<code>.item()</code>)</td>
+      <td><span class="tag bad">High</span></td>
+    </tr>
+    <tr>
+      <td>② Edge frame + Wigner</td>
+      <td>For each of 460 edges: build a 3×3 orthonormal frame aligned to the edge (Gram–Schmidt with <code>cross</code>), extract Euler angles via <code>atan2</code>/<code>acos</code>, then compute Wigner-D matrices (<code>X<sub>α</sub>·J·X<sub>β</sub>·J·X<sub>γ</sub></code>) for each of l=0,1,2.</td>
+      <td><code>cross</code> ×2, <code>rand_like</code>, <code>atan2</code>, <code>acos</code>, <code>sin</code>/<code>cos</code>, <code>bmm</code>, <code>index_put_</code></td>
+      <td><span class="tag bad">High</span></td>
+    </tr>
+    <tr>
+      <td>③ Embedding</td>
+      <td>Initialize node features from atomic number; aggregate edge features into nodes.</td>
+      <td><code>nn.Embedding</code> lookup, <code>scatter_add</code>, <code>gate</code> activation</td>
+      <td><span class="tag good">Low</span></td>
+    </tr>
+    <tr>
+      <td>④ Transformer blocks</td>
+      <td>The "real" compute: equivariant attention + SO(2) convolution + FFN per layer. Uses the Wigner matrices from ② to keep features rotation-equivariant. Bulk of FLOPs.</td>
+      <td><code>linear</code> (matmul), <code>softmax</code>, <code>layer_norm</code>, <code>silu</code>, <code>bmm</code>, <code>scatter_add</code></td>
+      <td><span class="tag warn">Medium</span> (<code>repeat_interleave</code> in softmax, <code>masked_select</code> in irrep coefficient indexing)</td>
+    </tr>
+    <tr>
+      <td>⑤ Output heads</td>
+      <td>Project node features to a scalar energy + 3-vector force per atom. <code>energy = scatter_add(node_energies, batch)</code>.</td>
+      <td><code>linear</code>, <code>index_add_</code>, <code>narrow</code></td>
+      <td><span class="tag good">Low</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Why stages ① and ② dominate optimization work</h3>
+
+<p>Stage ④ is where the FLOPs are — but it's essentially a pile of <code>linear</code> + <code>softmax</code> +
+<code>layer_norm</code>, all of which lower well to Neuron's matmul and activation engines. <strong>Stages ① and ②
+are different</strong>: they're <em>geometry</em>, not deep learning. They run small ops on small tensors
+([1,3,3] cell vectors; [E,3] edge vectors; [E,3,3] rotation matrices), and many of those ops
+(<code>cross</code>, <code>atan2</code>, <code>acos</code>, <code>rand_like</code>) aren't yet implemented in the Neuron backend.</p>
+
+<p>Per fallback, the cost isn't the math — it's the host round-trip. With ~6 fallback ops × ~60 invocations
+across the 460-edge graph, the dispatcher overhead becomes dominant. <strong>This is exactly where the
+ablation patches focus.</strong></p>
+
 <h2>Results</h2>
 
 <div class="panel">
