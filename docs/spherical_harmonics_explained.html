@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spherical Harmonics — From Direction to Coefficients</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a22; --ink: #e6e8ee; --muted: #8b94a7;
+    --accent: #7cc4ff; --warn: #ffb454; --bad: #ff6e6e; --good: #7ee787;
+    --line: #2a3142; --purple: #c49bff;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif; line-height: 1.55; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 { font-size: 20px; margin: 36px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; color: var(--accent); }
+  p { margin: 8px 0; }
+  .lede { color: var(--muted); margin-bottom: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 14px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  code, pre { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+  pre { background: #0a0d12; padding: 12px 14px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--line); }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  .caption { color: var(--muted); font-size: 12px; text-align: center; margin: 4px 0 12px; }
+  .math { font-family: "Times New Roman", serif; font-size: 15px; font-style: italic; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); }
+  .tag.l0 { color: var(--good); border-color: #285c30; background: #133420; }
+  .tag.l1 { color: var(--accent); border-color: #1a3a5c; background: #0f2030; }
+  .tag.l2 { color: var(--warn); border-color: #5a4422; background: #2a1f10; }
+  .tag.l3 { color: var(--purple); border-color: #3d2a5c; background: #1f1430; }
+  svg text { font-family: ui-monospace, "JetBrains Mono", monospace; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Spherical Harmonics — From Direction to Coefficients</h1>
+<p class="lede">A concrete walkthrough of what <code>Y_l^m(θ, φ)</code> actually computes,
+with real numbers for real directions.</p>
+
+<div class="panel">
+  <strong>The one-line summary:</strong> Spherical harmonics take a direction (a point on the unit sphere)
+  and produce a fixed-size vector of numbers that encodes "which direction" in a rotation-friendly way.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>1. The input: a direction on the sphere</h2>
+
+<p>Start with an edge vector between two atoms:</p>
+<pre>r_ij = pos[j] - pos[i] = [1.5, 0.8, 2.1]   # displacement in Å</pre>
+
+<p>Separate into distance and direction:</p>
+<pre>distance  = ‖r_ij‖ = 2.77 Å                  # how far (→ radial basis)
+direction = r_ij / ‖r_ij‖ = [0.54, 0.29, 0.76] # which way (→ spherical harmonics)</pre>
+
+<p>The direction is a unit vector — a point on the sphere. We can also write it in spherical coordinates:</p>
+<pre>θ = arccos(z) = arccos(0.76) = 40.5°    # polar angle from z-axis
+φ = arctan2(y, x) = arctan2(0.29, 0.54) = 28.3°   # azimuthal angle in xy-plane</pre>
+
+<svg viewBox="0 0 820 260" width="100%">
+  <rect width="820" height="260" fill="var(--bg)"/>
+  <g font-size="11" fill="var(--ink)">
+    <!-- Sphere -->
+    <circle cx="200" cy="130" r="100" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+    <ellipse cx="200" cy="130" rx="100" ry="30" fill="none" stroke="var(--line)" stroke-width="0.8" stroke-dasharray="4 3"/>
+    <!-- Axes -->
+    <line x1="200" y1="130" x2="200" y2="20" stroke="var(--muted)" stroke-width="1"/>
+    <text x="205" y="18" fill="var(--muted)">z</text>
+    <line x1="200" y1="130" x2="310" y2="130" stroke="var(--muted)" stroke-width="1"/>
+    <text x="315" y="134" fill="var(--muted)">x</text>
+    <line x1="200" y1="130" x2="150" y2="165" stroke="var(--muted)" stroke-width="1"/>
+    <text x="140" y="175" fill="var(--muted)">y</text>
+    <!-- Direction vector -->
+    <line x1="200" y1="130" x2="260" y2="55" stroke="var(--accent)" stroke-width="2.5" marker-end="url(#a1)"/>
+    <circle cx="260" cy="55" r="4" fill="var(--accent)"/>
+    <text x="268" y="52" fill="var(--accent)" font-size="12">r̂_ij = (θ, φ)</text>
+    <!-- Angle arcs -->
+    <path d="M200,110 A20,20 0 0,1 212,100" fill="none" stroke="var(--warn)" stroke-width="1.5"/>
+    <text x="215" y="98" fill="var(--warn)">θ</text>
+    <path d="M220,130 A20,20 0 0,0 215,135" fill="none" stroke="var(--good)" stroke-width="1.5"/>
+    <text x="225" y="142" fill="var(--good)">φ</text>
+
+    <!-- Right side: explanation -->
+    <text x="420" y="40" fill="var(--ink)" font-size="13">The direction r̂_ij is a point on the unit sphere.</text>
+    <text x="420" y="65" fill="var(--muted)">θ = angle from north pole (z-axis)</text>
+    <text x="420" y="85" fill="var(--muted)">φ = angle around the equator (from x-axis)</text>
+    <text x="420" y="120" fill="var(--ink)" font-size="13">Spherical harmonics Y_l^m(θ, φ) evaluate</text>
+    <text x="420" y="140" fill="var(--ink)" font-size="13">a set of basis functions at this point.</text>
+    <text x="420" y="175" fill="var(--muted)">Think of it like: "what's the value of each</text>
+    <text x="420" y="195" fill="var(--muted)">Fourier mode at this angle?"</text>
+    <text x="420" y="230" fill="var(--accent)">Output: one number per (l, m) pair.</text>
+  </g>
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>
+</svg>
+<p class="caption">Figure 1. A direction on the unit sphere is the input to spherical harmonics.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>2. The output: coefficients at each level</h2>
+
+<p>For our example direction <code>[0.54, 0.29, 0.76]</code>, here are the actual real spherical harmonic values:</p>
+
+<table>
+  <thead><tr><th>Level l</th><th>Components (2l+1)</th><th>Formula (real SH)</th><th>Values for our direction</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag l0">l=0</span></td>
+      <td>1</td>
+      <td><code>Y_0^0 = 1</code> (constant)</td>
+      <td><code>[1.00]</code></td>
+    </tr>
+    <tr>
+      <td><span class="tag l1">l=1</span></td>
+      <td>3</td>
+      <td><code>Y_1^{-1} = y, Y_1^0 = z, Y_1^1 = x</code></td>
+      <td><code>[0.29, 0.76, 0.54]</code></td>
+    </tr>
+    <tr>
+      <td><span class="tag l2">l=2</span></td>
+      <td>5</td>
+      <td><code>xy, yz, 3z²−1, xz, x²−y²</code> (scaled)</td>
+      <td><code>[0.31, 0.44, 0.38, 0.82, 0.21]</code></td>
+    </tr>
+    <tr>
+      <td><span class="tag l3">l=3</span></td>
+      <td>7</td>
+      <td>cubic polynomials in x,y,z</td>
+      <td><code>[..7 numbers..]</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="panel">
+  <strong>Key observation:</strong> l=1 is literally just the xyz components of the unit vector!
+  Higher l values are polynomial combinations of x, y, z that capture finer angular patterns.
+  <br><br>
+  For <code>lmax=6</code>, one direction produces <strong>(6+1)² = 49 numbers</strong>.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>3. What each level "sees"</h2>
+
+<p>Each level l captures angular detail at a specific resolution — like frequency bands in audio:</p>
+
+<svg viewBox="0 0 820 320" width="100%">
+  <rect width="820" height="320" fill="var(--bg)"/>
+  <g font-size="11" fill="var(--ink)">
+
+    <!-- l=0 -->
+    <circle cx="100" cy="80" r="40" fill="none" stroke="var(--good)" stroke-width="2"/>
+    <text x="75" y="140" fill="var(--good)" font-size="12">l=0: constant</text>
+    <text x="60" y="158" fill="var(--muted)">"something is there"</text>
+    <text x="60" y="174" fill="var(--muted)">No direction info.</text>
+    <text x="60" y="190" fill="var(--muted)">Invariant under rotation.</text>
+
+    <!-- l=1 -->
+    <g transform="translate(280, 80)">
+      <ellipse cx="0" cy="0" rx="15" ry="38" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <ellipse cx="0" cy="0" rx="38" ry="15" fill="none" stroke="var(--accent)" stroke-width="1" opacity="0.4"/>
+      <line x1="0" y1="-42" x2="0" y2="42" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="3 2"/>
+    </g>
+    <text x="245" y="140" fill="var(--accent)" font-size="12">l=1: dipole (3 lobes)</text>
+    <text x="235" y="158" fill="var(--muted)">"it's in THAT direction"</text>
+    <text x="235" y="174" fill="var(--muted)">Encodes x, y, z.</text>
+    <text x="235" y="190" fill="var(--muted)">Transforms like a vector.</text>
+
+    <!-- l=2 -->
+    <g transform="translate(480, 80)">
+      <ellipse cx="-18" cy="-18" rx="12" ry="12" fill="none" stroke="var(--warn)" stroke-width="2"/>
+      <ellipse cx="18" cy="-18" rx="12" ry="12" fill="none" stroke="var(--warn)" stroke-width="2"/>
+      <ellipse cx="-18" cy="18" rx="12" ry="12" fill="none" stroke="var(--warn)" stroke-width="2"/>
+      <ellipse cx="18" cy="18" rx="12" ry="12" fill="none" stroke="var(--warn)" stroke-width="2"/>
+    </g>
+    <text x="435" y="140" fill="var(--warn)" font-size="12">l=2: quadrupole (5 lobes)</text>
+    <text x="425" y="158" fill="var(--muted)">"it's elongated THIS way"</text>
+    <text x="425" y="174" fill="var(--muted)">Encodes xy, yz, xz, x²−y²…</text>
+    <text x="425" y="190" fill="var(--muted)">Transforms like a 5×5 matrix.</text>
+
+    <!-- l=3+ -->
+    <g transform="translate(680, 80)">
+      <path d="M-30,-10 Q-15,-35 0,-10 Q15,-35 30,-10" fill="none" stroke="var(--purple)" stroke-width="2"/>
+      <path d="M-30,10 Q-15,35 0,10 Q15,35 30,10" fill="none" stroke="var(--purple)" stroke-width="2"/>
+      <line x1="-35" y1="0" x2="35" y2="0" stroke="var(--purple)" stroke-width="0.5" stroke-dasharray="3 2"/>
+    </g>
+    <text x="640" y="140" fill="var(--purple)" font-size="12">l=3+: higher multipoles</text>
+    <text x="630" y="158" fill="var(--muted)">"fine angular structure"</text>
+    <text x="630" y="174" fill="var(--muted)">Cubic, quartic patterns…</text>
+    <text x="630" y="190" fill="var(--muted)">More detail, more cost.</text>
+
+    <!-- Bottom: analogy -->
+    <rect x="40" y="220" width="740" height="80" fill="var(--panel)" stroke="var(--line)" rx="8"/>
+    <text x="60" y="245" fill="var(--accent)" font-size="13">Audio analogy:</text>
+    <text x="60" y="268" fill="var(--ink)">l=0 is the DC offset. l=1 is the fundamental frequency. l=2 is the first overtone.</text>
+    <text x="60" y="288" fill="var(--muted)">Higher l = higher angular "frequency" = finer directional discrimination.</text>
+  </g>
+</svg>
+<p class="caption">Figure 2. Each level captures progressively finer angular patterns.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>4. Concrete example: three different directions</h2>
+
+<p>Let's see how the SH coefficients differ for three edge directions:</p>
+
+<table>
+  <thead><tr><th>Direction</th><th>Unit vector</th><th>l=0</th><th>l=1 [y, z, x]</th><th>Interpretation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Along +z (up)</td>
+      <td><code>[0, 0, 1]</code></td>
+      <td>1</td>
+      <td><code>[0, 1, 0]</code></td>
+      <td>All "z-ness", no x or y</td>
+    </tr>
+    <tr>
+      <td>Along +x (right)</td>
+      <td><code>[1, 0, 0]</code></td>
+      <td>1</td>
+      <td><code>[0, 0, 1]</code></td>
+      <td>All "x-ness"</td>
+    </tr>
+    <tr>
+      <td>45° in xz-plane</td>
+      <td><code>[0.71, 0, 0.71]</code></td>
+      <td>1</td>
+      <td><code>[0, 0.71, 0.71]</code></td>
+      <td>Equal x and z</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Notice: <strong>l=0 is always 1</strong> (it doesn't encode direction). The direction information starts at l=1.
+At l=1, it's literally the Cartesian components. At l=2+, you get products that distinguish
+"pointing along x" from "pointing at 45° between x and z" even more precisely.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>5. The formulas (real spherical harmonics)</h2>
+
+<p>In equivariant GNNs we use <strong>real</strong> spherical harmonics (no complex numbers). They're just
+polynomials in x, y, z of the unit vector:</p>
+
+<pre>
+<span style="color:var(--good)">l=0:</span>  Y_0^0  = 1
+
+<span style="color:var(--accent)">l=1:</span>  Y_1^-1 = y
+      Y_1^0  = z
+      Y_1^1  = x
+
+<span style="color:var(--warn)">l=2:</span>  Y_2^-2 = √3 · xy
+      Y_2^-1 = √3 · yz
+      Y_2^0  = ½(3z² − 1)
+      Y_2^1  = √3 · xz
+      Y_2^2  = ½√3 · (x² − y²)
+
+<span style="color:var(--purple)">l=3:</span>  Y_3^-3 = ½√(5/2) · y(3x² − y²)
+      Y_3^-2 = √15 · xyz
+      Y_3^-1 = ½√(3/2) · y(5z² − 1)
+      Y_3^0  = ½(5z³ − 3z)
+      Y_3^1  = ½√(3/2) · x(5z² − 1)
+      Y_3^2  = ½√15 · z(x² − y²)
+      Y_3^3  = ½√(5/2) · x(x² − 3y²)
+</pre>
+
+<p style="color:var(--muted)">(Normalization conventions vary — e3nn uses a specific one. The pattern is: degree-l polynomials in x,y,z restricted to the unit sphere.)</p>
+
+<div class="panel">
+  <strong>Why polynomials?</strong> Because polynomials of degree l in (x,y,z) restricted to the sphere
+  form exactly the space of functions that transforms via a (2l+1)×(2l+1) Wigner-D matrix under rotation.
+  This is a theorem from representation theory — it's not a design choice, it's the unique answer.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>6. One vector? SH add nothing. The value comes from operations.</h2>
+
+<p>This is a common point of confusion: if you have a <strong>single direction</strong>, converting it to spherical harmonics
+is just a lossless re-encoding. You get the same information back in a different format. No new information appears.</p>
+
+<div class="panel" style="border-color: var(--warn);">
+  <strong style="color:var(--warn)">Key insight:</strong> Spherical harmonics are not chosen because they're a better way to
+  <em>store</em> a direction. They're chosen because they make <em>operations on directions</em> equivariant by construction.
+</div>
+
+<svg viewBox="0 0 820 340" width="100%">
+  <rect width="820" height="340" fill="var(--bg)"/>
+  <g font-size="11" fill="var(--ink)">
+
+    <!-- Left: single vector, no benefit -->
+    <rect x="40" y="20" width="340" height="130" fill="var(--panel)" stroke="var(--line)" rx="8"/>
+    <text x="60" y="45" font-size="13" fill="var(--bad)">Single vector — no benefit</text>
+    <text x="60" y="72" fill="var(--muted)">r̂ = [0.54, 0.29, 0.76]</text>
+    <text x="60" y="92" fill="var(--muted)">    ↓ spherical harmonics</text>
+    <text x="60" y="112" fill="var(--muted)">Y(r̂) = [1, 0.29, 0.76, 0.54, ...]</text>
+    <text x="60" y="135" fill="var(--bad)">Same info, more numbers. No value added.</text>
+
+    <!-- Right: operations, benefit -->
+    <rect x="420" y="20" width="360" height="130" fill="var(--panel)" stroke="var(--line)" rx="8"/>
+    <text x="440" y="45" font-size="13" fill="var(--good)">Operations on SH — this is where it pays off</text>
+    <text x="440" y="72" fill="var(--muted)">① Sum over neighbors → higher-l survives</text>
+    <text x="440" y="92" fill="var(--muted)">② Tensor product with features → equivariant coupling</text>
+    <text x="440" y="112" fill="var(--muted)">③ Rotate with Wigner-D → exact transformation</text>
+    <text x="440" y="135" fill="var(--good)">Operations are clean, composable, equivariant.</text>
+
+    <!-- The two payoff scenarios -->
+    <text x="40" y="180" font-size="13" fill="var(--accent)">The two situations where SH earn their keep:</text>
+
+    <!-- Payoff 1: Aggregation -->
+    <rect x="40" y="195" width="360" height="120" fill="var(--panel)" stroke="var(--line)" rx="8"/>
+    <text x="60" y="218" font-size="12" fill="var(--warn)">① Aggregation (summing over neighbors)</text>
+    <text x="60" y="242" fill="var(--ink)">Vectors cancel: [-1,0,0] + [+1,0,0] = [0,0,0]</text>
+    <text x="60" y="260" fill="var(--ink)">Quadrupoles don't: l=2 terms add constructively</text>
+    <text x="60" y="285" fill="var(--muted)">→ Higher-l components encode the angular</text>
+    <text x="60" y="300" fill="var(--muted)">   distribution of neighbors, not just the mean direction.</text>
+
+    <!-- Payoff 2: Tensor products -->
+    <rect x="420" y="195" width="360" height="120" fill="var(--panel)" stroke="var(--line)" rx="8"/>
+    <text x="440" y="218" font-size="12" fill="var(--warn)">② Composition (tensor products)</text>
+    <text x="440" y="242" fill="var(--ink)">features(l=1) ⊗ edge_SH(l=1) → output(l=0,1,2)</text>
+    <text x="440" y="260" fill="var(--ink)">Clebsch-Gordan rules say which outputs are allowed.</text>
+    <text x="440" y="285" fill="var(--muted)">→ The only bilinear operation that preserves</text>
+    <text x="440" y="300" fill="var(--muted)">   equivariance. Can't do this with raw xyz.</text>
+  </g>
+</svg>
+<p class="caption">Figure 3. SH are a representation chosen for the operations you'll perform, not for storage efficiency.</p>
+
+<div class="panel">
+  <strong>Analogy:</strong> Complex numbers don't help you store a single 2D point better than (x, y).
+  But they make <em>rotations</em> trivial (multiply by e^{iθ}) and <em>composition</em> clean (multiply two complex numbers).
+  You choose the representation for what you'll <em>do</em> with it, not how you'll <em>store</em> it.
+  Spherical harmonics are the same idea in 3D for angular information.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>7. Why not just use the xyz vector directly?</h2>
+
+<div class="grid2">
+  <div class="panel">
+    <strong style="color:var(--bad)">Just xyz (l=1 only)</strong>
+    <ul style="margin:8px 0; padding-left:16px; color:var(--muted)">
+      <li>3 numbers per direction</li>
+      <li>Can only represent dipole patterns</li>
+      <li>Can't distinguish "neighbor along x" from "two neighbors symmetric about x" after aggregation</li>
+      <li>Information lost when you sum over neighbors</li>
+    </ul>
+  </div>
+  <div class="panel">
+    <strong style="color:var(--good)">Full SH up to lmax</strong>
+    <ul style="margin:8px 0; padding-left:16px; color:var(--muted)">
+      <li>(lmax+1)² numbers per direction</li>
+      <li>Captures arbitrarily fine angular patterns</li>
+      <li>After summing over neighbors, higher-l components survive and encode the angular distribution</li>
+      <li>Each l-block rotates independently → equivariance is trivial</li>
+    </ul>
+  </div>
+</div>
+
+<h3>The aggregation problem</h3>
+<p>When atom i collects messages from all its neighbors, it <strong>sums</strong> them. If you only have l=1 (vectors),
+two neighbors at opposite directions cancel out — you lose information. With l=2, you can tell
+"I have neighbors along the x-axis" (whether +x or −x) because x² is positive either way.</p>
+
+<svg viewBox="0 0 820 200" width="100%">
+  <rect width="820" height="200" fill="var(--bg)"/>
+  <g font-size="11" fill="var(--ink)">
+    <!-- Scenario: two neighbors at ±x -->
+    <circle cx="150" cy="100" r="14" fill="var(--accent)"/>
+    <text x="143" y="105">i</text>
+    <circle cx="60" cy="100" r="12" fill="var(--warn)"/>
+    <text x="55" y="105">j</text>
+    <circle cx="240" cy="100" r="12" fill="var(--warn)"/>
+    <text x="234" y="105">k</text>
+    <line x1="136" y1="100" x2="72" y2="100" stroke="var(--good)" stroke-width="2"/>
+    <line x1="164" y1="100" x2="228" y2="100" stroke="var(--good)" stroke-width="2"/>
+
+    <text x="80" y="75" fill="var(--muted)">r̂_ij = [-1, 0, 0]</text>
+    <text x="170" y="75" fill="var(--muted)">r̂_ik = [+1, 0, 0]</text>
+
+    <!-- l=1 sum -->
+    <text x="350" y="50" fill="var(--accent)" font-size="12">l=1 (vector) sum:</text>
+    <text x="350" y="72">Y_1(r̂_ij) + Y_1(r̂_ik) = [-1,0,0] + [+1,0,0] = [0,0,0]</text>
+    <text x="350" y="92" fill="var(--bad)">→ ZERO! Direction info completely lost.</text>
+
+    <!-- l=2 sum -->
+    <text x="350" y="125" fill="var(--warn)" font-size="12">l=2 (quadrupole) sum:</text>
+    <text x="350" y="147">Y_2(r̂_ij) + Y_2(r̂_ik) = [0,0,-½,0,½] + [0,0,-½,0,½] = [0,0,-1,0,1]</text>
+    <text x="350" y="167" fill="var(--good)">→ Non-zero! Encodes "neighbors along x-axis".</text>
+    <text x="350" y="187" fill="var(--muted)">The x²−y² term (last component) survives because (−1)² = (+1)² = 1.</text>
+  </g>
+</svg>
+<p class="caption">Figure 3. Higher-l components survive aggregation where vectors cancel.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>8. The rotation guarantee</h2>
+
+<p>The magic property: if you rotate the input direction by rotation R, the SH coefficients at level l
+transform by the <strong>Wigner-D matrix</strong> D^l(R):</p>
+
+<pre>
+Y_l^m(R · r̂)  =  Σ_m'  D^l_{mm'}(R) · Y_l^m'(r̂)
+</pre>
+
+<p>In matrix form for each l:</p>
+
+<table>
+  <thead><tr><th>Level</th><th>Size of D^l</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag l0">l=0</span></td><td>1×1 (= 1)</td><td>Scalar — doesn't change under rotation</td></tr>
+    <tr><td><span class="tag l1">l=1</span></td><td>3×3</td><td>Same as the 3D rotation matrix R itself</td></tr>
+    <tr><td><span class="tag l2">l=2</span></td><td>5×5</td><td>Derived from R, mixes the 5 components among themselves</td></tr>
+    <tr><td><span class="tag l3">l=3</span></td><td>7×7</td><td>Derived from R, mixes the 7 components among themselves</td></tr>
+  </tbody>
+</table>
+
+<div class="panel">
+  <strong>This is the entire reason EquiformerV3 works.</strong><br><br>
+  Because each l-block transforms independently and predictably, the model can:
+  <ol style="margin:8px 0; padding-left:20px; color:var(--muted)">
+    <li>Store features as SH coefficients at each l</li>
+    <li>Process them through attention and FFN layers</li>
+    <li>Know exactly how to rotate them when needed (multiply by D^l)</li>
+    <li>Read off the l=0 part as energy (invariant) and l=1 part as forces (vector)</li>
+  </ol>
+  Equivariance is guaranteed by linear algebra, not learned from data.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2>9. Putting it all together: one edge in EquiformerV3</h2>
+
+<pre>
+# Given: edge from atom i to atom j
+r_ij = pos[j] - pos[i]                    # [3] displacement
+dist = torch.norm(r_ij)                    # scalar distance
+r_hat = r_ij / dist                        # [3] unit direction
+
+# Spherical harmonics of the direction (computed via edge_rot_mat + Wigner-D)
+Y = spherical_harmonics(r_hat, lmax=6)     # [49] coefficients
+# Y[0]     = l=0 (1 number)  — always 1
+# Y[1:4]   = l=1 (3 numbers) — the xyz direction
+# Y[4:9]   = l=2 (5 numbers) — quadratic angular patterns
+# Y[9:16]  = l=3 (7 numbers) — cubic patterns
+# ...
+# Y[36:49] = l=6 (13 numbers) — highest angular detail
+
+# Radial basis (distance encoding)
+W = radial_basis(dist)                     # [num_radial_basis] — "how far"
+
+# Message: combine sender features with angular filter, weighted by distance
+message = tensor_product(features_j, Y) * W   # equivariant combination
+</pre>
+
+<div class="panel">
+  <strong>Summary:</strong>
+  <ul style="margin:8px 0; padding-left:16px">
+    <li><strong>Input:</strong> a direction (unit vector on the sphere)</li>
+    <li><strong>Output:</strong> (lmax+1)² numbers — the "fingerprint" of that direction in a rotation-friendly basis</li>
+    <li><strong>l=0:</strong> "a neighbor exists" (no direction info)</li>
+    <li><strong>l=1:</strong> "it's in this direction" (the vector itself)</li>
+    <li><strong>l=2+:</strong> "here's the fine angular structure" (survives aggregation, enables richer representations)</li>
+    <li><strong>Rotation:</strong> each l-block transforms independently via a known (2l+1)×(2l+1) matrix</li>
+  </ul>
+</div>
+
+</main>
+</body>
+</html>
