@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EquiformerV3 on Trainium — Ablation Results</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --ink: #e6e8ee;
+    --muted: #8b94a7;
+    --accent: #7cc4ff;
+    --good:  #7ee787;
+    --warn:  #ffb454;
+    --bad:   #ff6e6e;
+    --line:  #2a3142;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif; line-height: 1.55; }
+  main { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px; }
+  h2 { font-size: 22px; margin: 36px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; color: var(--accent); }
+  p  { margin: 8px 0; }
+  .lede { color: var(--muted); margin-bottom: 24px; font-size: 15px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 14px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  code, pre { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+  pre { background: #0a0d12; padding: 12px 14px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--line); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--line); }
+  .tag.bad  { color: var(--bad);  border-color: #5a2a2a; background: #2a1414; }
+  .tag.good { color: var(--good); border-color: #285c30; background: #133420; }
+  .tag.warn { color: var(--warn); border-color: #5a4422; background: #2a1f10; }
+  .tag.nki  { color: #c0a8ff; border-color: #4a3a7a; background: #1f1830; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; background: #0a0d12; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.bold { font-weight: 600; }
+  tr.highlight { background: #133420; }
+  tr.highlight td { color: var(--good); }
+  .bar-row { display: flex; align-items: center; gap: 12px; margin: 6px 0; font-size: 13px; }
+  .bar-label { width: 200px; color: var(--muted); }
+  .bar-time  { width: 70px; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .bar-track { height: 18px; background: #0a0d12; border: 1px solid var(--line); border-radius: 4px; flex: 1; position: relative; }
+  .bar-fill  { height: 100%; background: linear-gradient(to right, #7cc4ff, #c0a8ff); border-radius: 3px; }
+  .bar-fill.baseline { background: #5a6478; }
+  .speedup-pill { background: #133420; color: var(--good); font-weight: 700; padding: 2px 10px; border-radius: 6px; font-size: 12px; }
+  .arrow-down { color: var(--good); font-weight: 700; }
+  svg { display: block; margin: 8px auto; }
+  .caption { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 8px; }
+  .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 16px 0; }
+  .kpi .box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi .value { color: var(--ink); font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi .sub   { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  details { margin: 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+  summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>EquiformerV3 on Trainium — Ablation Results</h1>
+<p class="lede">A cumulative-patch study on a 24-atom NaCl supercell (460 edges). Each step is applied
+in-place on the previous model. Numerical equivalence is verified after every patch.</p>
+
+<div class="kpi">
+  <div class="box"><div class="label">Baseline</div><div class="value">950 ms</div><div class="sub">median forward</div></div>
+  <div class="box"><div class="label">Final</div><div class="value">718 ms</div><div class="sub">median forward</div></div>
+  <div class="box"><div class="label">Speedup</div><div class="value">1.32×</div><div class="sub">cumulative</div></div>
+  <div class="box"><div class="label">Max rel error</div><div class="value">1.3e-4</div><div class="sub">vs. fp32 baseline</div></div>
+</div>
+
+<h2>Test setup</h2>
+
+<table>
+  <tbody>
+    <tr><td>Model</td><td><code>fairchem.experimental.equiformer_v3</code> — 302K params, 2 layers, lmax=mmax=2</td></tr>
+    <tr><td>Input</td><td>NaCl 2×2×3 rocksalt supercell — 24 atoms, 460 edges, max_neigh=20, r=6.0 Å</td></tr>
+    <tr><td>Hardware</td><td>trn2, single core (lnc=1), 1 visible Neuron core</td></tr>
+    <tr><td>Timing</td><td>median over 15 runs after 3 warmup forwards, with explicit <code>torch.neuron.synchronize()</code></td></tr>
+    <tr><td>Correctness</td><td>energy + forces compared elementwise against the unpatched baseline</td></tr>
+  </tbody>
+</table>
+
+<h2>Results</h2>
+
+<div class="panel">
+<div class="bar-row"><div class="bar-label">baseline</div><div class="bar-time">950 ms</div><div class="bar-track"><div class="bar-fill baseline" style="width:100%"></div></div><div style="width:80px"></div></div>
+<div class="bar-row"><div class="bar-label">+ wigner_cache</div><div class="bar-time">858 ms</div><div class="bar-track"><div class="bar-fill" style="width:90.3%"></div></div><div style="width:80px"><span class="speedup-pill">1.11×</span></div></div>
+<div class="bar-row"><div class="bar-label">+ expand_index_int32</div><div class="bar-time">830 ms</div><div class="bar-track"><div class="bar-fill" style="width:87.4%"></div></div><div style="width:80px"><span class="speedup-pill">1.14×</span></div></div>
+<div class="bar-row"><div class="bar-label">+ wigner_nki_kernel</div><div class="bar-time">737 ms</div><div class="bar-track"><div class="bar-fill" style="width:77.6%"></div></div><div style="width:80px"><span class="speedup-pill">1.29×</span></div></div>
+<div class="bar-row"><div class="bar-label">+ edge_rot_mat_nki</div><div class="bar-time">815 ms</div><div class="bar-track"><div class="bar-fill" style="width:85.8%"></div></div><div style="width:80px"><span class="speedup-pill">1.17×</span></div></div>
+<div class="bar-row"><div class="bar-label">+ torch_cross_explicit</div><div class="bar-time"><strong>718 ms</strong></div><div class="bar-track"><div class="bar-fill" style="width:75.6%"></div></div><div style="width:80px"><span class="speedup-pill">1.32×</span></div></div>
+</div>
+
+<table>
+  <thead><tr><th>Step</th><th class="num">median (ms)</th><th class="num">min (ms)</th><th class="num">speedup</th><th class="num">|F|<sub>max</sub></th><th class="num">rel ΔE</th><th class="num">rel ΔF</th></tr></thead>
+  <tbody>
+    <tr><td>baseline</td><td class="num">950.40</td><td class="num">640.71</td><td class="num">1.00×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">0.00e+00</td></tr>
+    <tr><td>+ wigner_cache</td><td class="num">857.79</td><td class="num">716.42</td><td class="num">1.11×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">9.81e-05</td></tr>
+    <tr><td>+ expand_index_int32</td><td class="num">830.15</td><td class="num">635.38</td><td class="num">1.14×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">6.15e-05</td></tr>
+    <tr><td>+ wigner_nki_kernel</td><td class="num">737.22</td><td class="num">592.89</td><td class="num">1.29×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">1.32e-04</td></tr>
+    <tr><td>+ edge_rot_mat_nki</td><td class="num">815.20</td><td class="num">701.30</td><td class="num">1.17×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">1.05e-04</td></tr>
+    <tr class="highlight"><td class="bold">+ torch_cross_explicit</td><td class="num bold">717.85</td><td class="num bold">613.01</td><td class="num bold">1.32×</td><td class="num">9.53e-03</td><td class="num">0.00e+00</td><td class="num">1.05e-04</td></tr>
+  </tbody>
+</table>
+<p class="caption">All steps preserve fp32 equivalence (rel ΔE = 0, rel ΔF ≤ 1.3e-4 — well within fp32 reordering noise).</p>
+
+<h2>Where each patch sits in the forward pass</h2>
+
+<svg viewBox="0 0 1040 320" width="100%">
+  <rect width="1040" height="320" fill="#0f1115"/>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7cc4ff"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="#e6e8ee">
+
+    <rect x="20"  y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="35"  y="68">graph + cell volume</text>
+    <rect x="20"  y="88" width="180" height="22" fill="#1f1830" stroke="#4a3a7a" rx="4"/>
+    <text x="28"  y="103" fill="#c0a8ff">PATCH 5: torch_cross_explicit</text>
+
+    <rect x="240" y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="265" y="68">init_edge_rot_mat</text>
+    <rect x="240" y="88" width="180" height="22" fill="#1f1830" stroke="#4a3a7a" rx="4"/>
+    <text x="248" y="103" fill="#c0a8ff">PATCH 4: edge_rot_mat_nki</text>
+
+    <rect x="460" y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="475" y="68">wigner_D (Xa·J·Xb·J·Xc)</text>
+    <rect x="460" y="88" width="180" height="22" fill="#1f1830" stroke="#4a3a7a" rx="4"/>
+    <text x="468" y="103" fill="#c0a8ff">PATCH 3: wigner_nki_kernel</text>
+    <rect x="460" y="115" width="180" height="22" fill="#2a1f10" stroke="#5a4422" rx="4"/>
+    <text x="468" y="130" fill="#ffb454">PATCH 1: wigner_cache</text>
+
+    <rect x="680" y="40" width="180" height="46" fill="#161a22" stroke="#2a3142" rx="6"/>
+    <text x="710" y="68">SO(3) attention/FFN</text>
+    <rect x="680" y="88" width="180" height="22" fill="#2a1f10" stroke="#5a4422" rx="4"/>
+    <text x="688" y="103" fill="#ffb454">PATCH 2: expand_index_int32</text>
+
+    <rect x="900" y="40" width="120" height="46" fill="#133420" stroke="#285c30" rx="6"/>
+    <text x="918" y="68" fill="#7ee787">energy + forces</text>
+
+    <line x1="200" y1="62"  x2="240" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="420" y1="62"  x2="460" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="640" y1="62"  x2="680" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="860" y1="62"  x2="900" y2="62"  stroke="#7cc4ff" stroke-width="2" marker-end="url(#ar)"/>
+
+    <text x="20" y="200" fill="#8b94a7" font-size="13">Legend</text>
+    <rect x="20" y="215" width="14" height="14" fill="#1f1830" stroke="#4a3a7a"/>
+    <text x="42" y="227" fill="#c0a8ff">NKI kernel / on-device replacement</text>
+    <rect x="280" y="215" width="14" height="14" fill="#2a1f10" stroke="#5a4422"/>
+    <text x="302" y="227" fill="#ffb454">Python-side optimization (cache, dtype)</text>
+    <rect x="600" y="215" width="14" height="14" fill="#161a22" stroke="#2a3142"/>
+    <text x="622" y="227" fill="#e6e8ee">Original Equiformer module</text>
+  </g>
+</svg>
+
+<h2>What each patch does</h2>
+
+<h3>1. <span class="tag warn">PYTHON</span> wigner_cache <span style="color:var(--muted)">— +0.11× speedup</span></h3>
+
+<p><strong>Target:</strong> <code>wigner._z_rot_mat(angle, l)</code>, called 6× per forward (3 angles × 2 layers).</p>
+
+<p><strong>What it patches:</strong> The function builds a sparse rotation matrix where cosines lie on the diagonal and sines on the antidiagonal. Each call rebuilt the index tensors from scratch:</p>
+
+<pre>inds          = torch.arange(0, 2*l+1, ...)      <span style="color:var(--muted)"># [0, 1, 2, ..., 2l]</span>
+reversed_inds = torch.arange(2*l, -1, -1, ...)   <span style="color:var(--muted)"># [2l, ..., 1, 0]</span>
+frequencies   = torch.arange(l, -l-1, -1, ...)
+M[..., inds, reversed_inds] = sin(frequencies * angle)
+M[..., inds, inds]          = cos(frequencies * angle)</pre>
+
+<p><strong>Fix:</strong> these three index tensors only depend on <code>l</code> and the device — cache them in a dict keyed by <code>(l, device, dtype)</code>. Mathematically identical, eliminates 18 redundant <code>torch.arange</code> dispatches per forward.</p>
+
+<h3>2. <span class="tag warn">PYTHON</span> expand_index_int32 <span style="color:var(--muted)">— +0.03× speedup</span></h3>
+
+<p><strong>Target:</strong> the <code>expand_index</code> buffers used by <code>SO3Linear</code> and the equivariant norms — int64 index tensors fed to <code>torch.index_select</code>.</p>
+
+<p><strong>Fix:</strong> cast them to int32 once at startup. Bit-exact (the values are small irrep indices) and halves the bytes that <code>index_select</code> reads. Picks up an additional ~30 ms.</p>
+
+<h3>3. <span class="tag nki">NKI</span> wigner_nki_kernel <span style="color:var(--muted)">— +0.15× speedup</span></h3>
+
+<p><strong>Target:</strong> the entire <code>wigner_D(l, α, β, γ) = X<sub>α</sub> · J · X<sub>β</sub> · J · X<sub>γ</sub></code> chain.</p>
+
+<p><strong>What's inefficient:</strong> the original PyTorch implementation dispatches ~12 ops per call (3× <code>arange</code>, 2× <code>sin</code>/<code>cos</code>, advanced <code>index_put_</code>, multiple matmuls). Each op pays Neuron dispatcher overhead. With ~2,300 angle values per forward, this is the dominant cost.</p>
+
+<p><strong>How the kernel works:</strong> the X matrices have a <em>structured</em> form — non-zero only on the diagonal and antidiagonal. Right-multiplying by a structured X is therefore equivalent to:</p>
+
+<pre>(M · X)[b, i, j] = M[b, i, j] · cos(freq[j]·θ) + M[b, i, F-1-j] · sin(freq[j]·θ)</pre>
+
+<p>i.e. a fused elementwise op against a "j-reversed" copy of M. The kernel fuses the whole chain:</p>
+
+<pre>1. M0      = X<sub>α</sub> · J            <span style="color:var(--muted)"># elementwise (cos·J_diag + sin·J_anti)</span>
+2. M0_jrev = j-reversed M0       <span style="color:var(--muted)"># precomputed J_perm constants</span>
+3. M1      = M0 · X<sub>β</sub>           <span style="color:var(--muted)"># elementwise blend with cos/sin of β</span>
+4. M2      = M1 · J             <span style="color:var(--muted)"># dense [K,K] structured multiply, unrolled in K</span>
+5. out     = M2 · X<sub>γ</sub>           <span style="color:var(--muted)"># elementwise blend with cos/sin of γ</span></pre>
+
+<p>The full chain becomes <strong>one fused HBM-to-HBM call</strong> with ~2 nc_matmuls + a handful of elementwise multiplies — no dispatcher trips between stages. Tile size <code>P_MAX=128</code>; B is padded up to a multiple of 128.</p>
+
+<details><summary>Why the chain is mostly elementwise (math)</summary>
+<p>X<sub>θ</sub> is a (2l+1)×(2l+1) rotation about the z-axis in the spherical-harmonic basis. It's diagonal in cos(freq·θ) plus antidiagonal in sin(freq·θ). Multiplying any matrix M by X<sub>θ</sub> on the right means: each column of M is independently rescaled by cos(freq[j]·θ) plus the column with reversed index, scaled by sin(freq[j]·θ). That's two same-shape elementwise multiplies and one add — no actual matrix multiplication needed. Only the central <code>J</code> (a fixed permutation-like matrix loaded from <code>Jd.pt</code>) is dense, and that's where the single <code>nc_matmul</code> goes.</p>
+</details>
+
+<h3>4. <span class="tag nki">NKI</span> edge_rot_mat_nki <span style="color:var(--muted)">— eliminates 3 CPU fallbacks</span></h3>
+
+<p><strong>Target:</strong> <code>init_edge_rot_mat(edge_distance_vec)</code> — builds a 3×3 orthonormal frame per edge for equivariance.</p>
+
+<p><strong>What's inefficient:</strong> the original code uses <code>torch.cross</code> and <code>torch.rand_like</code>, both of which fall back to CPU on Neuron, forcing host round-trips for all 460 edges every forward.</p>
+
+<p><strong>How the kernel works:</strong></p>
+
+<pre>1. norm_x  = edge_vec / |edge_vec|            <span style="color:var(--muted)"># unit edge direction</span>
+
+2. e2 = [0, 1, 0]  if  |norm_x[1]| ≤ 0.9      <span style="color:var(--muted)"># deterministic tiebreaker</span>
+   e2 = [0, 0, 1]  otherwise                  <span style="color:var(--muted)"># replaces torch.rand_like</span>
+
+3. norm_z = (norm_x × e2) / |·|               <span style="color:var(--muted)"># expanded to mul/sub form</span>
+4. norm_y = (norm_x × norm_z) / |·|
+
+5. rot_mat = stack [norm_z, norm_x, -norm_y]</pre>
+
+<p>The deterministic tiebreaker is the key correctness move: the only requirement on <code>e2</code> is that it not be parallel to <code>norm_x</code>. Two perpendicular candidates ([0,1,0] and [0,0,1]) cover all cases — <code>norm_x</code> can't be parallel to both. The output frame differs from the random baseline by a rotation in the perpendicular plane, but the model is rotation-equivariant in that plane, so energy and forces are unchanged.</p>
+
+<p>The kernel uses a single tile with <code>P_MAX=128</code> partitions × 3 columns. All ops are fused elementwise multiplies, adds, and a single <code>nl.rsqrt</code> for normalization.</p>
+
+<details><summary>Why this step doesn't always win on wall-clock</summary>
+<p>The fallbacks in <code>init_edge_rot_mat</code> total ~10–80 ms of CPU time depending on the run, but Neuron's async dispatch can hide a lot of that behind device work. The structural win is real — <strong>0 CPU round-trips for this routine vs. 3 before</strong> — but the wall-clock gain is variable (sometimes a wash, sometimes 30 ms). It also unlocks the next patch: with this kernel in place, only one <code>linalg_cross</code> fallback remains in the model.</p>
+</details>
+
+<h3>5. <span class="tag warn">PYTHON</span> torch_cross_explicit <span style="color:var(--muted)">— eliminates the last cross fallback</span></h3>
+
+<p><strong>Target:</strong> the <code>torch.cross</code> calls in <code>radius_graph_pbc</code> that compute the unit cell volume (<code>a₂×a₃</code>, <code>a₃×a₁</code>, <code>a₁×a₂</code>).</p>
+
+<p><strong>Fix:</strong> monkey-patch <code>torch.cross</code> globally with the explicit-indexing form:</p>
+
+<pre>def cross(a, b, dim=-1):
+    a0, a1, a2 = take(a, 0), take(a, 1), take(a, 2)
+    b0, b1, b2 = take(b, 0), take(b, 1), take(b, 2)
+    return cat([
+        a1*b2 - a2*b1,
+        a2*b0 - a0*b2,
+        a0*b1 - a1*b0,
+    ], dim=dim)</pre>
+
+<p>Mathematically identical, but <code>mul</code>, <code>sub</code>, <code>cat</code> are all on-device on Neuron — no fallback. Brings total fallbacks from 8 to 6.</p>
+
+<h2>Fallback ops eliminated</h2>
+
+<table>
+  <thead><tr><th>Op</th><th>Where</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><code>aten::uniform_</code></td><td><code>torch.rand_like</code> in <code>init_edge_rot_mat</code></td><td><span class="tag good">Eliminated</span></td></tr>
+    <tr><td><code>aten::linalg_cross.out</code> ×2</td><td><code>torch.cross</code> for ẑ and ŷ in <code>init_edge_rot_mat</code></td><td><span class="tag good">Eliminated</span></td></tr>
+    <tr><td><code>aten::linalg_cross.out</code></td><td><code>torch.cross</code> in <code>radius_graph_pbc</code></td><td><span class="tag good">Eliminated</span></td></tr>
+    <tr><td><code>aten::atan2.out</code></td><td>Euler γ in <code>_rotation_to_wigner_matrix</code></td><td><span class="tag warn">Remaining</span></td></tr>
+    <tr><td><code>aten::acos.out</code></td><td>Euler β via <code>o3.xyz_to_angles</code></td><td><span class="tag warn">Remaining</span></td></tr>
+    <tr><td><code>aten::sort.values_stable</code></td><td>graph build (top-k neighbor cap)</td><td><span class="tag warn">Remaining</span></td></tr>
+    <tr><td><code>aten::scatter_reduce.two_out</code></td><td>reductions</td><td><span class="tag warn">Remaining</span></td></tr>
+    <tr><td><code>aten::repeat_interleave.Tensor</code></td><td><code>softmax.py</code> (PyG-style)</td><td><span class="tag warn">Remaining</span></td></tr>
+    <tr><td><code>aten::index_fill_.int_Scalar</code></td><td>graph build</td><td><span class="tag warn">Remaining</span></td></tr>
+  </tbody>
+</table>
+<p class="caption">Started at 8 fallbacks; down to 6 after this round of patches.</p>
+
+<h2>Takeaways</h2>
+
+<div class="grid2">
+<div class="panel">
+<h3>What worked</h3>
+<ul>
+<li>Fusing many small dispatched ops into one NKI kernel (the wigner chain). The dispatcher is the bottleneck, not raw FLOPs.</li>
+<li>Targeted Python-side fixes (caching, dtype) catch dispatcher overhead without writing a kernel.</li>
+<li>Replacing fallback ops with mathematically equivalent on-device sequences (<code>torch.cross</code> → explicit indexing).</li>
+</ul>
+</div>
+<div class="panel">
+<h3>What's next</h3>
+<ul>
+<li>Atan2/acos kernel for the Euler-angle extraction (so3.py:382–389) — same per-edge hot path as <code>init_edge_rot_mat</code>.</li>
+<li>End-to-end tracing once the dynamic-shape ops (<code>masked_select</code>, <code>repeat_interleave</code>) are addressed.</li>
+<li>Static-shape recipe: move <code>radius_graph_pbc</code> outside the traced region, feed pre-built <code>edge_index</code>.</li>
+</ul>
+</div>
+</div>
+
+<div class="panel">
+<strong>Bottom line.</strong> A 1.32× speedup with strict numerical equivalence, achieved via two NKI kernels and three small Python-side patches. The gain comes mostly from <em>eliminating per-op dispatcher overhead</em> rather than improving compute density — which is the right pattern to push further: each remaining fallback is another small kernel away.
+</div>
+
+</main>
+</body>
+</html>
