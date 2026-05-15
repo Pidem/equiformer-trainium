@@ -1,5 +1,6 @@
-"""Simple inference with EquiformerV3 on Neuron (Trainium)."""
+"""Inference with EquiformerV3 on Neuron — NKI scatter_reduce kernel, with timing."""
 import sys
+import time
 sys.path.insert(0, "equiformer_v3/src")
 
 import torch
@@ -8,20 +9,34 @@ from ase.build import bulk
 from fairchem.core.common.registry import registry
 from fairchem.core.preprocessing import AtomsToGraphs
 
-# Import the model so it registers itself
 import fairchem.experimental.models.equiformer_v3.equiformer_v3  # noqa: F401
 
-# 1. Create a simple NaCl unit cell
-atoms = bulk("NaCl", crystalstructure="rocksalt", a=5.64)
+# ── Patch get_counts with the NKI kernel ──────────────────────────────────────
+import fairchem.core.common.utils as _fcc_utils
+sys.path.insert(0, "kernels")
+from scatter_reduce import nki_scatter_reduce_sum_kernel
 
-# 2. Convert to PyG graph
+_nki_call_count = 0
+
+def _nki_get_counts(x: torch.Tensor, length: int):
+    global _nki_call_count
+    _nki_call_count += 1
+    result = nki_scatter_reduce_sum_kernel(x.int(), int(length))
+    # Cast back to the original dtype expected by the caller
+    return result.to(x.dtype)
+
+_fcc_utils.get_counts = _nki_get_counts
+
+
+# ── Build input ───────────────────────────────────────────────────────────────
+atoms = bulk("NaCl", crystalstructure="rocksalt", a=5.64)
 a2g = AtomsToGraphs(max_neigh=20, radius=6.0, r_energy=False, r_forces=False, r_stress=False)
 data = a2g.convert_all([atoms])[0]
 num_atoms = len(atoms)
 data.batch = torch.zeros(num_atoms, dtype=torch.long)
 data.natoms = torch.tensor([num_atoms])
 
-# 3. Instantiate model
+# ── Instantiate model ─────────────────────────────────────────────────────────
 model = registry.get_model_class("equiformer_v3")(
     use_pbc=True,
     otf_graph=True,
@@ -46,23 +61,25 @@ model = registry.get_model_class("equiformer_v3")(
 model.eval()
 print(f"Model params: {model.num_params:,}")
 
-# 4. Move model and data to neuron
 device = torch.device("neuron")
 model = model.to(device)
 data = data.to(device)
 
-# 5. Run inference
+# ── Run inference with timing ─────────────────────────────────────────────────
 torch_neuronx.clear_op_tracking()
+t0 = time.perf_counter()
 with torch.no_grad():
     outputs = model(data)
+t1 = time.perf_counter()
 
 print(f"Energy: {outputs['energy'].item():.6f}")
 print(f"Forces shape: {outputs['forces'].shape}")
 print(f"Forces:\n{outputs['forces']}")
+print(f"\nInference wall time (NKI scatter_reduce): {(t1 - t0)*1000:.1f} ms")
+print(f"NKI get_counts calls: {_nki_call_count}")
 
-# 6. Fallback analysis
 fallback_ops = torch_neuronx.get_fallback_ops()
-neuron_ops = torch_neuronx.get_executed_ops()
+neuron_ops   = torch_neuronx.get_executed_ops()
 
 print(f"\n--- Op Execution Summary ---")
 print(f"Ops on Neuron : {len(neuron_ops)}")

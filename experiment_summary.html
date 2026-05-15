@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EquiformerV3 on Trainium — NKI Experiment Summary</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; background: #0f1117; color: #e2e8f0; line-height: 1.6; }
+  a { color: #60a5fa; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  h1 { font-size: 1.9rem; font-weight: 700; color: #f1f5f9; margin-bottom: 0.3rem; }
+  h2 { font-size: 1.25rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin: 2.5rem 0 1rem; border-bottom: 1px solid #1e293b; padding-bottom: 0.4rem; }
+  h3 { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin: 1.4rem 0 0.5rem; }
+  p  { margin-bottom: 0.75rem; color: #cbd5e1; font-size: 0.93rem; }
+  ul { margin: 0.5rem 0 0.75rem 1.2rem; color: #cbd5e1; font-size: 0.93rem; }
+  li { margin-bottom: 0.3rem; }
+  code { background: #1e293b; padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.85rem; color: #7dd3fc; }
+
+  .subtitle { color: #64748b; font-size: 0.92rem; margin-bottom: 2rem; }
+
+  /* ── cards ── */
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; }
+  .card-title { font-weight: 600; font-size: 1rem; color: #f1f5f9; margin-bottom: 0.5rem; }
+
+  /* ── verdict badges ── */
+  .badge { display: inline-block; padding: 0.15em 0.6em; border-radius: 4px; font-size: 0.78rem; font-weight: 600; margin-left: 0.5rem; vertical-align: middle; }
+  .badge-fail   { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+  .badge-warn   { background: #431407; color: #fdba74; border: 1px solid #7c2d12; }
+  .badge-ok     { background: #052e16; color: #86efac; border: 1px solid #14532d; }
+  .badge-info   { background: #0c1a2e; color: #93c5fd; border: 1px solid #1e40af; }
+
+  /* ── result boxes ── */
+  .result-box { background: #0f172a; border-left: 3px solid #334155; padding: 0.75rem 1rem; border-radius: 0 6px 6px 0; margin: 0.75rem 0; font-size: 0.88rem; }
+  .result-box.fail  { border-left-color: #ef4444; }
+  .result-box.warn  { border-left-color: #f97316; }
+  .result-box.ok    { border-left-color: #22c55e; }
+  .result-box.info  { border-left-color: #3b82f6; }
+
+  /* ── tables ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; margin: 0.75rem 0 1rem; }
+  th { background: #0f172a; color: #94a3b8; text-align: left; padding: 0.5rem 0.75rem; font-weight: 600; border-bottom: 1px solid #334155; }
+  td { padding: 0.45rem 0.75rem; border-bottom: 1px solid #1e293b; color: #cbd5e1; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1a2744; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hi  { color: #f87171; font-weight: 600; }   /* bad/slow */
+  .lo  { color: #4ade80; font-weight: 600; }   /* good/fast */
+  .dim { color: #475569; }
+
+  /* ── comparison split ── */
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  .compare-side { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 1rem 1.25rem; }
+  .compare-side.cpu  { border-top: 3px solid #3b82f6; }
+  .compare-side.nki  { border-top: 3px solid #a855f7; }
+  .compare-side.xla  { border-top: 3px solid #22c55e; }
+  .compare-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; }
+  .compare-side.cpu .compare-label  { color: #60a5fa; }
+  .compare-side.nki .compare-label  { color: #c084fc; }
+  .compare-side.xla .compare-label  { color: #4ade80; }
+  .big-num { font-size: 1.6rem; font-weight: 700; }
+  .big-unit { font-size: 0.85rem; color: #64748b; margin-left: 0.25rem; }
+
+  /* ── timeline ── */
+  .timeline { position: relative; padding-left: 1.75rem; }
+  .timeline::before { content: ""; position: absolute; left: 0.5rem; top: 0; bottom: 0; width: 2px; background: #334155; }
+  .tl-item { position: relative; margin-bottom: 1.5rem; }
+  .tl-dot { position: absolute; left: -1.35rem; top: 0.3rem; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: #334155; border: 2px solid #475569; }
+  .tl-dot.fail { background: #ef4444; border-color: #ef4444; }
+  .tl-dot.ok   { background: #22c55e; border-color: #22c55e; }
+  .tl-dot.info { background: #3b82f6; border-color: #3b82f6; }
+  .tl-head { font-weight: 600; color: #e2e8f0; font-size: 0.95rem; }
+  .tl-sub  { font-size: 0.84rem; color: #64748b; }
+
+  /* ── insight box ── */
+  .insight { background: #1a1a2e; border: 1px solid #3730a3; border-radius: 6px; padding: 1rem 1.25rem; margin: 1rem 0; }
+  .insight-title { font-weight: 700; color: #818cf8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+
+  @media (max-width: 700px) { .compare-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ── -->
+  <h1>EquiformerV3 on AWS Trainium2</h1>
+  <p class="subtitle">NKI Bootcamp — experiments, findings, and NKI kernel comparison &nbsp;·&nbsp; NaCl unit cell (2 atoms, ~40 edges, small model: 2 layers, 32 channels)</p>
+
+  <!-- ── Goal ── -->
+  <h2>Project Goal</h2>
+  <p>Measure inference throughput of <a href="https://arxiv.org/abs/2604.09130">EquiformerV3</a> on Trainium2 and determine whether custom NKI kernels can improve latency versus XLA-compiled baseline. The model is an SE(3)-equivariant graph attention Transformer for predicting molecular energy and forces.</p>
+
+  <div class="compare-grid" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="compare-side cpu">
+      <div class="compare-label">CPU Baseline</div>
+      <div class="big-num">5.67<span class="big-unit">ms avg</span></div>
+      <div style="font-size:0.82rem;color:#64748b;margin-top:0.25rem">353 atoms/s · static shapes, 20 runs</div>
+    </div>
+    <div class="compare-side xla">
+      <div class="compare-label">XLA (torch.compile, no NKI)</div>
+      <div class="big-num">4,402<span class="big-unit">ms</span></div>
+      <div style="font-size:0.82rem;color:#64748b;margin-top:0.25rem">0.5 atoms/s · first compile included</div>
+    </div>
+    <div class="compare-side nki">
+      <div class="compare-label">NKI-patched (any op)</div>
+      <div class="big-num hi">≥ 4×<span class="big-unit">slower</span></div>
+      <div style="font-size:0.82rem;color:#64748b;margin-top:0.25rem">every NKI attempt degraded performance</div>
+    </div>
+  </div>
+
+  <!-- ── Setup ── -->
+  <h2>Model &amp; Setup</h2>
+  <div class="card">
+    <div class="card-title">Small benchmark config (used for all experiments)</div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Layers</td><td>2</td><td>Channels</td><td>32</td></tr>
+      <tr><td>Lmax / Mmax</td><td>2 / 2</td><td>Attn heads</td><td>4</td></tr>
+      <tr><td>Cutoff</td><td>6 Å</td><td>Max neighbors</td><td>20</td></tr>
+      <tr><td>Atoms</td><td>2 (NaCl unit cell)</td><td>Edges</td><td>~40</td></tr>
+      <tr><td>Params</td><td>302 K</td><td>Hardware</td><td>trn2.3xlarge (4 NeuronCores)</td></tr>
+    </table>
+    <p style="margin-top:0.5rem">Full production model (OC20 config): 91M params, 8 layers, 128 channels, L<sub>max</sub>=6.</p>
+  </div>
+
+  <!-- ── Neuron compat issues ── -->
+  <h2>Neuron Compatibility Issues Found</h2>
+  <div class="card">
+    <table>
+      <tr><th>Issue</th><th>Location</th><th>Status</th></tr>
+      <tr>
+        <td><code>torch.masked_select</code> / bool indexing crashes</td>
+        <td>Neuron i1-tensor bug</td>
+        <td><span class="badge badge-ok">Fixed</span> cast to int8, use <code>torch.where + index_select</code></td>
+      </tr>
+      <tr>
+        <td><code>int64</code> not natively supported</td>
+        <td>auto-cast warning</td>
+        <td><span class="badge badge-warn">Warning</span> non-blocking, but int32 indices can't be used in index_put</td>
+      </tr>
+      <tr>
+        <td>Non-contiguous tensor error on device</td>
+        <td><code>edge_rot_mat.py:86</code> — <code>torch.transpose</code></td>
+        <td><span class="badge badge-ok">Fixed</span> added <code>.contiguous()</code> after transpose</td>
+      </tr>
+      <tr>
+        <td>Non-contiguous slices in <code>get_pbc_distances</code></td>
+        <td><code>utils.py:600-613</code> — boolean-index filter</td>
+        <td><span class="badge badge-ok">Fixed</span> added <code>.contiguous()</code> on nonzero_idx and slices</td>
+      </tr>
+      <tr>
+        <td>Dynamic shapes in <code>radius_graph_pbc</code></td>
+        <td>graph construction</td>
+        <td><span class="badge badge-ok">Worked around</span> <code>otf_graph=False</code> + pre-padded static tensors</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── Fallback ops ── -->
+  <h2>CPU Fallback Ops (Neuron cannot compile these)</h2>
+  <div class="card">
+    <p>Running <code>test_1.py</code> with <code>torch_neuronx</code> fallback logging revealed these ops fall back to CPU every forward pass:</p>
+    <table>
+      <tr><th>Priority</th><th>Op</th><th>Location</th><th>Role</th></tr>
+      <tr><td><span class="badge badge-fail">High</span></td><td><code>aten::scatter_reduce.two_out</code></td><td>utils.py:787 <code>get_counts()</code></td><td>Aggregates neighbor counts during graph construction</td></tr>
+      <tr><td><span class="badge badge-fail">High</span></td><td><code>aten::sort.values_stable</code></td><td>utils.py:861</td><td>Sorts neighbors by distance</td></tr>
+      <tr><td><span class="badge badge-fail">High</span></td><td><code>aten::repeat_interleave.Tensor</code></td><td>utils.py:849</td><td>Expands index offsets for graph trimming</td></tr>
+      <tr><td><span class="badge badge-fail">High</span></td><td><code>aten::index_fill_.int_Scalar</code></td><td>utils.py:901</td><td>Writes into neighbor mask</td></tr>
+      <tr><td><span class="badge badge-warn">Medium</span></td><td><code>aten::atan2.out</code></td><td>so3.py:389</td><td>Euler angle γ from rotation matrix (once per layer)</td></tr>
+      <tr><td><span class="badge badge-warn">Medium</span></td><td><code>aten::acos.out</code></td><td>e3nn o3</td><td>Spherical angle α from edge vectors</td></tr>
+      <tr><td><span class="badge badge-warn">Medium</span></td><td><code>aten::linalg_cross.out</code></td><td>o3 rotation utils</td><td>Cross product for edge rotation matrices</td></tr>
+      <tr><td><span class="badge badge-info">Low</span></td><td><code>aten::uniform_</code></td><td>so3.py, input_block.py</td><td>Weight init — only at model creation, not inference</td></tr>
+    </table>
+  </div>
+
+  <!-- ── Experiment timeline ── -->
+  <h2>Experiments</h2>
+  <div class="timeline">
+
+    <!-- Exp 1: scatter_reduce -->
+    <div class="tl-item">
+      <div class="tl-dot fail"></div>
+      <div class="tl-head">Experiment 1 — NKI <code>scatter_reduce</code> kernel <span class="badge badge-fail">Failed — 4× slower</span></div>
+      <div class="tl-sub">First candidate from fallback op analysis</div>
+      <div class="card" style="margin-top:0.6rem">
+        <div class="compare-grid">
+          <div class="compare-side cpu">
+            <div class="compare-label">CPU Fallback (baseline)</div>
+            <div class="big-num lo">0.008<span class="big-unit">ms</span></div>
+            <div style="font-size:0.8rem;color:#64748b">~8 µs per call, 1 call/forward</div>
+          </div>
+          <div class="compare-side nki">
+            <div class="compare-label">NKI scatter_reduce</div>
+            <div class="big-num hi">1,206<span class="big-unit">ms</span></div>
+            <div style="font-size:0.8rem;color:#64748b">~1.2 s per call — pure dispatch overhead</div>
+          </div>
+        </div>
+        <div class="result-box fail">
+          <strong>149,607× slower than CPU fallback.</strong> Model latency: 816 ms → 3,125 ms (+2,309 ms).
+        </div>
+        <h3>Root cause</h3>
+        <table>
+          <tr><th>Metric</th><th class="num">Value</th></tr>
+          <tr><td>Actual tensor I/O (40 edges × int32 + 2 floats)</td><td class="num">168 bytes</td></tr>
+          <tr><td>On-device exec time</td><td class="num lo">10.7 µs</td></tr>
+          <tr><td>Kernel binary (static DMA) reloaded each call</td><td class="num hi">65,852 bytes (64 KB)</td></tr>
+          <tr><td>Wall-clock round-trip per call</td><td class="num hi">1,206 ms</td></tr>
+          <tr><td>DMA queue packets per call</td><td class="num">33</td></tr>
+        </table>
+        <div class="insight">
+          <div class="insight-title">Key insight</div>
+          The 64 KB NEFF kernel binary is reloaded over PCIe on every invocation. The actual computation (10.7 µs) is negligible — 99.999% of wall time is dispatch overhead. The CPU fallback does the same work in 8 µs with zero device dispatch.
+        </div>
+      </div>
+    </div>
+
+    <!-- Exp 2: fused_linear -->
+    <div class="tl-item">
+      <div class="tl-dot fail"></div>
+      <div class="tl-head">Experiment 2 — NKI fused linear (mlp from nki-library) <span class="badge badge-fail">Failed — 4.5× slower</span></div>
+      <div class="tl-sub">Patched all <code>F.linear</code> calls with <code>nki_matmul_tiled</code> via <code>nki_op</code> custom op</div>
+      <div class="card" style="margin-top:0.6rem">
+        <div class="compare-grid">
+          <div class="compare-side xla">
+            <div class="compare-label">XLA Baseline</div>
+            <div class="big-num lo">4,402<span class="big-unit">ms</span></div>
+            <div style="font-size:0.8rem;color:#64748b">0.5 atoms/s — full model, one fused NEFF</div>
+          </div>
+          <div class="compare-side nki">
+            <div class="compare-label">NKI-patched linear</div>
+            <div class="big-num hi">19,857<span class="big-unit">ms</span></div>
+            <div style="font-size:0.8rem;color:#64748b">0.1 atoms/s — 20 separate NEFFs/forward</div>
+          </div>
+        </div>
+        <div class="result-box fail">
+          <strong>4.51× slower than XLA.</strong> Each of ~20 <code>F.linear</code> calls dispatches its own NEFF, paying ~1s PCIe overhead per call.
+        </div>
+        <h3>Why XLA wins</h3>
+        <p>XLA traces the entire model graph once and compiles a <em>single</em> NEFF that fuses all linear ops. The NKI patches split this into 20 separate NEFFs — each reloading a 64 KB binary — for the same shapes that XLA handled in one shot.</p>
+        <p>The linear shapes are tiny: M=40, K∈{16–192}. These are well below the [128×512] minimum needed to amortize Tensor Engine startup cost.</p>
+      </div>
+    </div>
+
+    <!-- Exp 3: batched matmul -->
+    <div class="tl-item">
+      <div class="tl-dot fail"></div>
+      <div class="tl-head">Experiment 3 — NKI <code>nc_matmul</code> across batch sizes <span class="badge badge-fail">Failed — 3,000× slower at all sizes</span></div>
+      <div class="tl-sub">Tested 7 layer shapes × 7 batch sizes (B=1–32) to find the crossover point where NKI amortizes PCIe overhead</div>
+      <div class="card" style="margin-top:0.6rem">
+        <table>
+          <tr><th>Batch (B)</th><th>M (rows)</th><th class="num">XLA (µs)</th><th class="num">NKI nc_matmul (µs)</th><th class="num">Ratio</th></tr>
+          <tr><td>1</td><td>39</td><td class="num lo">~350–500</td><td class="num hi">~1,200,000</td><td class="num hi">~3,000×</td></tr>
+          <tr><td>4</td><td>156</td><td class="num lo">~500–800</td><td class="num hi">~1,200,000</td><td class="num hi">~2,000×</td></tr>
+          <tr><td>16</td><td>624</td><td class="num lo">~800–1,250</td><td class="num hi">~1,200,000</td><td class="num hi">~1,000×</td></tr>
+          <tr><td>32</td><td>1,248</td><td class="num lo">~1,000–1,250</td><td class="num hi">~1,200,000</td><td class="num hi">~1,000×</td></tr>
+        </table>
+        <div class="result-box fail">
+          NKI time is <strong>flat at ~1.2 s</strong> across all 49 test cases — the smoking gun that cost is 100% dispatch overhead, completely independent of M or K.
+        </div>
+        <div class="insight">
+          <div class="insight-title">Key insight</div>
+          Increasing batch size does not amortize the per-call NEFF reload. The only escape is having the kernel called inside a device-side loop (on-chip) rather than from Python host code.
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary finding -->
+    <div class="tl-item">
+      <div class="tl-dot info"></div>
+      <div class="tl-head">Finding: Why attention_tkg was also ruled out</div>
+      <div class="card" style="margin-top:0.6rem">
+        <p>The <code>aten::bmm</code> calls in the profile (4.5/run, 7.6 ms avg) are <strong>not</strong> QKV attention — they are Wigner D-matrix rotations:</p>
+        <table>
+          <tr><th>Shape</th><th>Operation</th><th>Source</th></tr>
+          <tr><td><code>[40, 9, 9] × [40, 9, 32]</code></td><td>Wigner rotate</td><td>so3.py:463</td></tr>
+          <tr><td><code>[40, 9, 9] × [40, 9, 32]</code></td><td>Wigner inverse rotate</td><td>so3.py:471</td></tr>
+        </table>
+        <p>EquiformerV3's "attention" is a graph-based scatter softmax over edges, not a sequence-level Q·K<sup>T</sup>·V. <code>attention_tkg</code> (transformer token-generation with KV-cache) is architecturally the wrong kernel. Each Wigner bmm is only 23 KB of data — still below dispatch amortization threshold.</p>
+      </div>
+    </div>
+
+  </div><!-- /timeline -->
+
+  <!-- ── NKI candidate ranking ── -->
+  <h2>NKI Candidate Ranking (from profiling analysis)</h2>
+
+  <h3>Tier 1 — Strong candidates (not yet tried)</h3>
+  <div class="card">
+    <table>
+      <tr><th>Op</th><th class="num">Count/run</th><th class="num">Avg CPU (ms)</th><th class="num">Total CPU (s)</th><th>Why</th></tr>
+      <tr>
+        <td><code>aten::index_select</code></td>
+        <td class="num">3.0</td><td class="num hi">485</td><td class="num hi">34.4</td>
+        <td>Large gather on edge/node features [N_edges, channels]; high I/O, NKI has <code>nc_n_gather</code></td>
+      </tr>
+      <tr>
+        <td><code>aten::linear</code> (FFN)</td>
+        <td class="num">3.2</td><td class="num">94</td><td class="num">7.3</td>
+        <td>y = xW<sup>T</sup>+b — textbook matmul, NKI sweet spot. <em>Tried as individual patches — failed. Would need fused dispatch.</em></td>
+      </tr>
+      <tr>
+        <td><code>aten::embedding</code></td>
+        <td class="num">0.6</td><td class="num">532</td><td class="num">8.0</td>
+        <td>Large gather of edge/node features; DMA-backed gather could amortize dispatch</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Tier 2 — Viable with care</h3>
+  <div class="card">
+    <table>
+      <tr><th>Op</th><th class="num">Count/run</th><th class="num">Avg (ms)</th><th>Notes</th></tr>
+      <tr>
+        <td><code>aten::bmm</code></td>
+        <td class="num">4.5</td><td class="num">7.6</td>
+        <td>Wigner rotations [40,9,9]×[40,9,32]; ~23 KB/call — dispatch still risky, but fusing both rotations into one kernel saves 1 reload</td>
+      </tr>
+      <tr>
+        <td><code>aten::index_put_</code></td>
+        <td class="num">~1</td><td class="num hi">939</td>
+        <td>Scatter-write; infrequent — likely graph construction, not layer compute</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Tier 3 — Do NOT target (same failure as scatter_reduce)</h3>
+  <div class="card">
+    <table>
+      <tr><th>Op</th><th>Reason</th></tr>
+      <tr><td><code>aten::ge, aten::is_nonzero</code></td><td>Tiny tensors, pure control flow; CPU does in µs</td></tr>
+      <tr><td><code>aten::item, aten::_local_scalar_dense</code></td><td>Scalar extraction — 1 element, irreducibly small I/O</td></tr>
+      <tr><td><code>aten::arange, aten::sub/add/mul</code></td><td>Fast per call (µs–ms), many are pure index arithmetic on small integer tensors</td></tr>
+      <tr><td><code>aten::atan2, aten::acos, aten::linalg_cross</code></td><td>Only 2–4 calls total across 24 runs — graph construction, not inference</td></tr>
+      <tr><td><code>aten::scatter_reduce</code></td><td class="hi">Already tried. 3 calls / 24 runs, 168-byte I/O, 149,607× overhead. Do not revisit.</td></tr>
+      <tr><td><code>aten::_to_copy / aten::to</code></td><td>36–44 calls/run; host↔device PCIe transfers, NKI can't eliminate these</td></tr>
+    </table>
+  </div>
+
+  <!-- ── Core lesson ── -->
+  <h2>Core Lesson</h2>
+  <div class="insight" style="border-color:#7c3aed;background:#1a0a2e;">
+    <div class="insight-title" style="color:#a78bfa;">NKI Dispatch Cost Dominates Small Models</div>
+    <p>Every NKI kernel call from Python host code reloads a ~64 KB NEFF binary over PCIe. This costs <strong>~1.2 seconds per call</strong>, independent of tensor size or batch size. For this NaCl unit cell (40 edges), compute completes in nanoseconds, but dispatch pays the full 1.2s.</p>
+    <p>XLA's <code>torch.compile(backend='neuron')</code> wins because it traces the whole model graph into <em>one</em> NEFF — one reload, all ops fused, zero per-op dispatch cost.</p>
+    <p style="margin-bottom:0"><strong>NKI pays off when:</strong> the kernel is large enough (typically tens of KB to MB of data), called in a tight device-side loop, <em>or</em> when it replaces an op that XLA cannot already fuse (dynamic shapes, custom scatter patterns).</p>
+  </div>
+
+  <!-- ── What would actually help ── -->
+  <h2>What Would Actually Help</h2>
+  <div class="card">
+    <table>
+      <tr><th>Strategy</th><th>Why it would work</th></tr>
+      <tr>
+        <td><strong>Larger batches (multi-molecule)</strong></td>
+        <td>Once M ≥ 128 across batched atoms, Tensor Engine saturates and per-NEFF overhead amortizes. At B=4 molecules × 39 edges = 156 rows (M_pad=256), NKI gets 2 tiles — first fair comparison point.</td>
+      </tr>
+      <tr>
+        <td><strong>NKI inside XLA fusion</strong></td>
+        <td>Register an NKI kernel as a custom XLA op so it compiles into the same NEFF as the rest of the graph. Only one PCIe reload for the entire forward pass.</td>
+      </tr>
+      <tr>
+        <td><strong>Fused Wigner rotation kernel</strong></td>
+        <td>Fuse both <code>so3.py</code> bmm calls + their normalization into one NKI kernel — halves dispatch count for that block.</td>
+      </tr>
+      <tr>
+        <td><strong>RadialFunction fusion</strong></td>
+        <td>The [40,128]→[32]→[32]→[192] MLP is called 4× per forward. Fusing all 3 linears + SiLU into one NKI kernel saves 2 HBM round-trips <em>and</em> 2 PCIe reloads.</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── Current state ── -->
+  <h2>Current State (test_1_compile.py)</h2>
+  <div class="card">
+    <p>The compile test is being fixed to successfully run on device. Two non-contiguous tensor bugs were patched:</p>
+    <ul>
+      <li><code>edge_rot_mat.py:86</code> — <code>torch.transpose(...).contiguous()</code> added</li>
+      <li><code>utils.py:600-613</code> — <code>.contiguous()</code> on all boolean-indexed slices in <code>get_pbc_distances</code></li>
+    </ul>
+    <p>A Neuron runtime resource error (4 cores requested, 3 available) is blocking the current run — a prior benchmark process holds the cores.</p>
+    <div class="result-box info">Next step once cores are free: run <code>test_1_compile.py</code> to get the XLA baseline vs NKI fused linear comparison with the corrected model. Then explore multi-molecule batching as the path to NKI amortization.</div>
+  </div>
+
+  <p style="color:#334155;font-size:0.78rem;margin-top:3rem;text-align:center">Generated from <code>previous_experiments.md</code> · equiformer-trainium · NKI Bootcamp 2026</p>
+</div>
+</body>
+</html>
